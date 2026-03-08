@@ -1,0 +1,50 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e6]: DataSpeak
+    - generic [ref=e7]:
+      - button "主题切换" [ref=e8] [cursor=pointer]
+      - button "模型设置" [ref=e9] [cursor=pointer]
+  - generic [ref=e10]:
+    - complementary [ref=e11]:
+      - generic [ref=e12]:
+        - generic [ref=e13]: 会话历史
+        - button "新建会话" [ref=e14] [cursor=pointer]
+      - button "当前会话 你好，我是 DataSpeak。你可以直接描述你要查询、插入或更新的数据。" [ref=e16] [cursor=pointer]:
+        - generic [ref=e17]: 当前会话
+        - generic [ref=e18]: 你好，我是 DataSpeak。你可以直接描述你要查询、插入或更新的数据。
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - generic [ref=e22]: 记录区
+        - generic [ref=e24]: 你好，我是 DataSpeak。你可以直接描述你要查询、插入或更新的数据。
+      - generic [ref=e25]: 就绪
+      - generic [ref=e26]:
+        - textbox "输入自然语言指令，例如：添加一条待办，明天下午提交报告" [ref=e27]
+        - button "发送" [ref=e28] [cursor=pointer]
+    - complementary [ref=e29]:
+      - generic [ref=e30]:
+        - combobox [ref=e31]:
+          - option "todos — 待办事项和任务清单" [selected]
+          - option "interview_plans — 存储面试计划的相关信息"
+          - option "_app_config"
+        - button "刷新" [ref=e32] [cursor=pointer]
+        - button "删除表" [ref=e33] [cursor=pointer]
+        - button "新建表" [ref=e34] [cursor=pointer]
+      - generic [ref=e35]:
+        - generic [ref=e36]: todos · 1 条记录 · 6 列
+        - table [ref=e37]:
+          - rowgroup [ref=e38]:
+            - row "id title status priority due_date created_at" [ref=e39]:
+              - columnheader "id" [ref=e40]
+              - columnheader "title" [ref=e41]
+              - columnheader "status" [ref=e42]
+              - columnheader "priority" [ref=e43]
+              - columnheader "due_date" [ref=e44]
+              - columnheader "created_at" [ref=e45]
+          - rowgroup [ref=e46]:
+            - row "1 顺丰视频面试 待办 中 2026-03-05 2026-03-07 11:16:14" [ref=e47]:
+              - cell "1" [ref=e48]
+              - cell "顺丰视频面试" [ref=e49]
+              - cell "待办" [ref=e50]
+              - cell "中" [ref=e51]
+              - cell "2026-03-05" [ref=e52]
+              - cell "2026-03-07 11:16:14" [ref=e53]

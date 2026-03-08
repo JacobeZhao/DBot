@@ -1,0 +1,10 @@
+openai
+langgraph
+langchain-openai
+langchain-core
+fastapi
+uvicorn[standard]
+rich
+tenacity
+python-dotenv
+aiosqlite
