@@ -8,7 +8,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from backend.config import config_manager
 from backend.state import DataSpeakState
-from backend.tools.schema_tools import GetTableSchemaTool
+from backend.tools.schema_tools import GetTableSchemaTool, INTERNAL_TABLES
 
 console = Console()
 
@@ -33,8 +33,7 @@ def drop_table_agent(state: DataSpeakState) -> DataSpeakState:
 
     schema_tool = GetTableSchemaTool()
     schema_info = schema_tool.run()
-    internal = {"checkpoints", "writes", "checkpoint_blobs", "checkpoint_migrations", "_app_config"}
-    table_list = [t for t in schema_info if t not in internal]
+    table_list = [t for t in schema_info if t not in INTERNAL_TABLES]
 
     llm_params = config_manager.get_llm_params()
     llm = ChatOpenAI(

@@ -2,6 +2,9 @@ from rich.console import Console
 from backend.state import DataSpeakState
 from backend.tools.schema_tools import GetTableSchemaTool, get_table_metadata, INTERNAL_TABLES
 
+
+SYSTEM_COLUMNS = {"id", "uuid", "创建时间", "更新时间", "created_at", "updated_at"}
+
 console = Console()
 
 
@@ -22,7 +25,7 @@ def list_tables_agent(state: DataSpeakState) -> DataSpeakState:
         desc = meta.get("description", "")
         aliases = [a for a in meta.get("aliases", []) if a]
         columns = schema_info[table]
-        col_names = [c["name"] for c in columns if c["name"] not in {"id", "created_at"}]
+        col_names = [c["name"] for c in columns if c["name"] not in SYSTEM_COLUMNS]
 
         header = f"{i}. **{table}**"
         if desc:

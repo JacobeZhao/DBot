@@ -8,7 +8,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from backend.config import config_manager
 from backend.state import DataSpeakState
-from backend.tools.schema_tools import GetTableSchemaTool
+from backend.tools.schema_tools import GetTableSchemaTool, INTERNAL_TABLES
 
 console = Console()
 
@@ -45,10 +45,9 @@ def alter_table_agent(state: DataSpeakState) -> DataSpeakState:
 
     schema_tool = GetTableSchemaTool()
     schema_info = schema_tool.run()
-    internal = {"checkpoints", "writes", "checkpoint_blobs", "checkpoint_migrations", "_app_config"}
     schema_str = ""
     for table, columns in schema_info.items():
-        if table in internal:
+        if table in INTERNAL_TABLES:
             continue
         cols = ", ".join([f"{c['name']}({c['type']})" for c in columns])
         schema_str += f"表 {table}: {cols}\n"

@@ -1,6 +1,6 @@
-import sqlite3
 import os
 import re
+import sqlite3
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,13 +8,127 @@ load_dotenv()
 DB_PATH = os.getenv("DB_PATH", "./dataspeak.db")
 
 INTERNAL_TABLES = {"checkpoints", "writes", "checkpoint_blobs", "checkpoint_migrations", "_table_metadata", "_app_config"}
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PROTECTED_COLUMNS = {"id", "uuid", "创建时间", "更新时间"}
+_IDENTIFIER_RE = re.compile(r"^(?!\d)[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*$")
 
 
-def _quote_identifier(name: str) -> str:
-    if not name or not _IDENTIFIER_RE.fullmatch(name):
+def is_valid_identifier(name: str) -> bool:
+    return bool(name and _IDENTIFIER_RE.fullmatch(name))
+
+
+def quote_identifier(name: str) -> str:
+    if not is_valid_identifier(name):
         raise ValueError(f"非法标识符: {name}")
     return f'"{name}"'
+
+
+# 兼容旧调用
+_quote_identifier = quote_identifier
+
+
+def table_exists(table_name: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        )
+        return bool(cursor.fetchone())
+    finally:
+        conn.close()
+
+
+def get_table_columns(table_name: str) -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"PRAGMA table_info({quote_identifier(table_name)})")
+        return [
+            {
+                "cid": row[0],
+                "name": row[1],
+                "type": row[2],
+                "notnull": bool(row[3]),
+                "default": row[4],
+                "pk": bool(row[5]),
+            }
+            for row in cursor.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def column_exists(table_name: str, column_name: str) -> bool:
+    return any(col["name"] == column_name for col in get_table_columns(table_name))
+
+
+def add_column(table_name: str, column_name: str, column_type: str = "TEXT", notnull: bool = False, default: str = "") -> str:
+    col_type = (column_type or "TEXT").strip().upper()
+    if col_type not in {"TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC"}:
+        raise ValueError(f"不支持的字段类型: {col_type}")
+
+    if not is_valid_identifier(table_name):
+        raise ValueError(f"非法表名: {table_name}")
+    if not is_valid_identifier(column_name):
+        raise ValueError(f"非法字段名: {column_name}")
+    if column_exists(table_name, column_name):
+        raise ValueError(f"字段已存在: {column_name}")
+
+    sql = f"ALTER TABLE {quote_identifier(table_name)} ADD COLUMN {quote_identifier(column_name)} {col_type}"
+    if notnull:
+        sql += " NOT NULL"
+    if default:
+        escaped = str(default).replace("'", "''")
+        sql += f" DEFAULT '{escaped}'"
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(sql)
+        conn.commit()
+        return sql
+    finally:
+        conn.close()
+
+
+def rename_column(table_name: str, old_name: str, new_name: str) -> str:
+    if old_name in PROTECTED_COLUMNS:
+        raise ValueError(f"系统字段不允许重命名: {old_name}")
+    if new_name in PROTECTED_COLUMNS:
+        raise ValueError(f"不允许重命名为系统字段: {new_name}")
+
+    if not column_exists(table_name, old_name):
+        raise ValueError(f"字段不存在: {old_name}")
+    if column_exists(table_name, new_name):
+        raise ValueError(f"目标字段已存在: {new_name}")
+
+    sql = (
+        f"ALTER TABLE {quote_identifier(table_name)} "
+        f"RENAME COLUMN {quote_identifier(old_name)} TO {quote_identifier(new_name)}"
+    )
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(sql)
+        conn.commit()
+        return sql
+    finally:
+        conn.close()
+
+
+def drop_column(table_name: str, column_name: str) -> str:
+    if column_name in PROTECTED_COLUMNS:
+        raise ValueError(f"系统字段不允许删除: {column_name}")
+    if not column_exists(table_name, column_name):
+        raise ValueError(f"字段不存在: {column_name}")
+
+    sql = f"ALTER TABLE {quote_identifier(table_name)} DROP COLUMN {quote_identifier(column_name)}"
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(sql)
+        conn.commit()
+        return sql
+    finally:
+        conn.close()
 
 
 # ── 元数据读写 ─────────────────────────────────────────────────
@@ -102,7 +216,7 @@ class GetTableSchemaTool:
 
             schema = {}
             for tbl in tables:
-                cursor.execute(f"PRAGMA table_info({_quote_identifier(tbl)})")
+                cursor.execute(f"PRAGMA table_info({quote_identifier(tbl)})")
                 columns = cursor.fetchall()
                 schema[tbl] = [
                     {

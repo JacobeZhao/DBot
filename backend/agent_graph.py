@@ -1,48 +1,49 @@
 import os
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import InMemorySaver
-from dotenv import load_dotenv
 
-from backend.state import DataSpeakState
-from backend.agents.router_agent import router_agent
-from backend.agents.planner_agent import planner_agent
-from backend.agents.extractor_agent import extractor_agent
-from backend.agents.critic_agent import critic_agent
-from backend.agents.executor_agent import executor_agent, query_agent
-from backend.agents.create_table_agent import create_table_agent
-from backend.agents.drop_table_agent import drop_table_agent
+from dotenv import load_dotenv
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, StateGraph
+
 from backend.agents.alter_table_agent import alter_table_agent
+from backend.agents.create_table_agent import create_table_agent
+from backend.agents.critic_agent import critic_agent
+from backend.agents.database_agent import database_agent
 from backend.agents.delete_data_agent import delete_data_agent
-from backend.agents.no_table_handler_agent import no_table_handler_agent
+from backend.agents.drop_table_agent import drop_table_agent
+from backend.agents.executor_agent import executor_agent, query_agent
+from backend.agents.extractor_agent import extractor_agent
 from backend.agents.list_tables_agent import list_tables_agent
+from backend.agents.no_table_handler_agent import no_table_handler_agent
+from backend.agents.planner_agent import planner_agent
+from backend.agents.router_agent import router_agent
+from backend.agents.table_agent import table_agent
+from backend.state import DataSpeakState
 
 load_dotenv()
 
 DB_PATH = os.getenv("DB_PATH", "./dataspeak.db")
 
 
-# ── 路由条件 ────────────────────────────────────────────────
+# ── Legacy 路由条件（保留兼容） ─────────────────────────────────
 
 def router_condition(state: DataSpeakState) -> str:
     intent = state.get("intent", "chat")
     if intent in ("insert", "update"):
         return "planner"
-    elif intent == "create_table":
+    if intent == "create_table":
         return "create_table"
-    elif intent == "drop_table":
+    if intent == "drop_table":
         return "drop_table"
-    elif intent == "alter_table":
+    if intent == "alter_table":
         return "alter_table"
-    elif intent == "delete_data":
+    if intent == "delete_data":
         return "delete_data"
-    elif intent == "list_tables":
+    if intent == "list_tables":
         return "list_tables"
-    else:
-        return "query"
+    return "query"
 
 
 def planner_condition(state: DataSpeakState) -> str:
-    """Planner 输出 NO_SUITABLE_TABLE → 触发自动建表流程，否则走正常提取"""
     plan = state.get("extraction_plan", "").strip()
     if plan.upper().startswith("NO_SUITABLE_TABLE"):
         return "no_table_handler"
@@ -54,29 +55,70 @@ def critic_condition(state: DataSpeakState) -> str:
     retry_count = state.get("retry_count", 0)
     if critic_result.upper().startswith("PASS"):
         return "confirm_preview"
-    elif retry_count < 2:
+    if retry_count < 2:
         return "extractor"
-    else:
-        return "error_end"
+    return "error_end"
 
 
 def drop_table_condition(state: DataSpeakState) -> str:
-    """drop_table_agent 如果解析失败会直接设 final_response，此时跳到 END"""
     if state.get("final_response") and not state.get("extracted_data"):
         return "end_direct"
     return "confirm_preview"
 
 
 def simple_agent_condition(state: DataSpeakState) -> str:
-    """alter_table / delete_data agent 解析失败时直接结束"""
     if state.get("final_response") and not state.get("extracted_data"):
         return "end_direct"
     return "confirm_preview"
 
 
+# ── 双智能体条件 ───────────────────────────────────────────────
+
+def router_mode_condition(state: DataSpeakState) -> str:
+    """先用 router 保留意图识别，再决定 dual/legacy 路径。"""
+    intent = (state.get("intent") or "").strip()
+    if intent in {"create_table", "drop_table", "alter_table", "delete_data", "insert", "update", "list_tables", "query", "chat"}:
+        return "db_agent"
+    return "legacy"
+
+
+def db_agent_condition(state: DataSpeakState) -> str:
+    if not state.get("is_data_related", True):
+        return "query"
+
+    op = (state.get("operation_type") or "").strip()
+    if op == "chat":
+        return "query"
+    if op == "list":
+        return "table_agent"
+    return "table_agent"
+
+
+def table_agent_condition(state: DataSpeakState) -> str:
+    if state.get("needs_confirmation"):
+        return "confirm_preview"
+
+    intent = (state.get("intent") or "").strip()
+    if intent == "create_table":
+        return "create_table"
+    if intent in {"chat", "query", "list_tables"}:
+        return "end_direct"
+    return "end_direct"
+
+
 # ── 预览节点 ─────────────────────────────────────────────────
 
 def confirm_preview_node(state: DataSpeakState) -> DataSpeakState:
+    # table_agent 已经产出过预览则直接复用
+    if state.get("confirmation_preview"):
+        return {
+            **state,
+            "needs_confirmation": True,
+            "final_response": state.get("confirmation_preview"),
+            "step_agent": state.get("step_agent") or "数据表智能体",
+            "step_phase": state.get("step_phase") or "action",
+        }
+
     intent = state.get("intent", "insert")
     extracted = state.get("extracted_data", {})
     newly_created = state.get("newly_created_table")
@@ -132,7 +174,7 @@ def error_end_node(state: DataSpeakState) -> DataSpeakState:
         **state,
         "needs_confirmation": False,
         "final_response": (
-            f"抱歉，经过多次尝试仍无法提取有效数据。请尝试更清晰地描述您的需求。\n"
+            "抱歉，经过多次尝试仍无法提取有效数据。请尝试更清晰地描述您的需求。\n"
             f"最后的检查意见：{state.get('critic_result', '')}"
         ),
     }
@@ -143,7 +185,7 @@ def error_end_node(state: DataSpeakState) -> DataSpeakState:
 def build_graph() -> StateGraph:
     graph = StateGraph(DataSpeakState)
 
-    # 注册节点
+    # Legacy 节点
     graph.add_node("router", router_agent)
     graph.add_node("planner", planner_agent)
     graph.add_node("no_table_handler", no_table_handler_agent)
@@ -159,30 +201,50 @@ def build_graph() -> StateGraph:
     graph.add_node("list_tables", list_tables_agent)
     graph.add_node("error_end", error_end_node)
 
+    # Dual-agent 节点
+    graph.add_node("db_agent", database_agent)
+    graph.add_node("table_agent", table_agent)
+
     graph.set_entry_point("router")
 
-    # Router → 各分支
+    # 先走 dual-agent；保留 legacy 回退能力
     graph.add_conditional_edges(
         "router",
-        router_condition,
+        router_mode_condition,
         {
-            "planner": "planner",
-            "query": "query",
-            "create_table": "create_table",
-            "drop_table": "drop_table",
-            "alter_table": "alter_table",
-            "delete_data": "delete_data",
-            "list_tables": "list_tables",
+            "db_agent": "db_agent",
+            "legacy": "planner",  # fallback: 走旧 insert/update 主流程
         },
     )
 
-    # insert/update 主流程
+    # DB agent -> table/query
+    graph.add_conditional_edges(
+        "db_agent",
+        db_agent_condition,
+        {
+            "table_agent": "table_agent",
+            "query": "query",
+        },
+    )
+
+    # table agent -> create / confirm / end
+    graph.add_conditional_edges(
+        "table_agent",
+        table_agent_condition,
+        {
+            "confirm_preview": "confirm_preview",
+            "create_table": "create_table",
+            "end_direct": END,
+        },
+    )
+
+    # Legacy insert/update 主流程（仍保留）
     graph.add_conditional_edges(
         "planner",
         planner_condition,
         {"no_table_handler": "no_table_handler", "extractor": "extractor"},
     )
-    graph.add_edge("no_table_handler", "extractor")  # 建完表继续提取数据
+    graph.add_edge("no_table_handler", "extractor")
     graph.add_edge("extractor", "critic")
     graph.add_conditional_edges(
         "critic",
@@ -190,7 +252,7 @@ def build_graph() -> StateGraph:
         {"confirm_preview": "confirm_preview", "extractor": "extractor", "error_end": "error_end"},
     )
 
-    # 简单操作 → 确认预览（或直接结束）
+    # 旧简单操作保持可用
     graph.add_conditional_edges(
         "drop_table",
         drop_table_condition,

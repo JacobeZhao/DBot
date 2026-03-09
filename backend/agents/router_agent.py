@@ -180,6 +180,42 @@ def _parse_intent(content: str) -> str:
     return "chat"
 
 
+def _heuristic_intent(user_input: str) -> str:
+    text = (user_input or "").strip().lower()
+    if not text:
+        return "chat"
+
+    if any(k in text for k in ["列出表", "有哪些表", "所有表", "查看表", "list tables", "show tables"]):
+        return "list_tables"
+
+    if any(k in text for k in ["新建表", "创建表", "建表", "create table"]):
+        return "create_table"
+
+    if any(k in text for k in ["删除表", "删表", "drop table"]):
+        return "drop_table"
+
+    if any(k in text for k in ["加字段", "新增字段", "删除字段", "改字段", "重命名字段", "alter table", "修改表结构"]):
+        return "alter_table"
+
+    if any(k in text for k in ["删除记录", "删数据", "删除数据", "delete from"]):
+        return "delete_data"
+
+    if any(k in text for k in ["更新", "修改", "设为", "改成", "update "]):
+        return "update"
+
+    if any(k in text for k in ["查询", "统计", "多少", "查一下", "select ", "where "]):
+        return "query"
+
+    if any(k in text for k in ["添加", "新增", "记录", "记一笔", "插入", "insert "]):
+        return "insert"
+
+    db_markers = ["表", "字段", "数据", "数据库", "记录", "行", "列", "sql"]
+    if any(k in text for k in db_markers):
+        return "query"
+
+    return "chat"
+
+
 def router_agent(state: DataSpeakState) -> DataSpeakState:
     console.print("[bold green][ROUTER][/bold green] 开始意图分类...")
 
@@ -220,8 +256,22 @@ def router_agent(state: DataSpeakState) -> DataSpeakState:
         content = _call_llm(llm, messages)
         intent = _parse_intent(content)
     except Exception as e:
-        console.print(f"[bold green][ROUTER][/bold green] 解析失败，默认 chat: {e}")
-        intent = "chat"
+        heuristic = _heuristic_intent(state.get("user_input", ""))
+        console.print(f"[bold green][ROUTER][/bold green] 解析失败，使用规则回退: {e} -> {heuristic}")
+        intent = heuristic
+
+    if intent not in ALLOWED_INTENTS:
+        intent = _heuristic_intent(state.get("user_input", ""))
+
+    if intent == "chat":
+        heuristic = _heuristic_intent(state.get("user_input", ""))
+        if heuristic != "chat":
+            intent = heuristic
+        elif any(k in (state.get("user_input", "")).lower() for k in ["表", "字段", "数据", "数据库", "记录", "sql"]):
+            intent = "query"
+
+    if state.get("user_input") and len((state.get("user_input") or "").strip()) <= 2 and intent == "chat":
+        intent = "query"
 
     console.print(f"[bold green][ROUTER][/bold green] 意图识别结果: [yellow]{intent}[/yellow]")
-    return {**state, "intent": intent}
+    return {**state, "intent": intent, "step_agent": "意图识别", "step_phase": "thought"}

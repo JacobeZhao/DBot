@@ -14,7 +14,7 @@ export function escapeHtml(value) {
 }
 
 export function validateIdentifier(value) {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(safeText(value).trim());
+  return /^(?!\d)[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*$/.test(safeText(value).trim());
 }
 
 export function validateWhereClause(value) {

@@ -10,6 +10,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from backend.config import config_manager
 from backend.state import DataSpeakState
+from backend.tools.schema_tools import INTERNAL_TABLES, is_valid_identifier, quote_identifier
 
 DB_PATH = os.getenv("DB_PATH", "./dataspeak.db")
 console = Console()
@@ -19,7 +20,7 @@ SYSTEM_PROMPT = """你是一个数据库设计专家。
 根据用户描述，设计一个合适的表结构，并给出字段提取计划。
 输出 JSON（不要有其他文字）：
 {
-  "table_name": "英文表名（snake_case）",
+  "table_name": "表名（支持中文/英文/数字/下划线，首字非数字）",
   "description": "表的中文用途描述（一句话）",
   "aliases": ["别名1", "别名2", "别名3"],
   "columns": [
@@ -27,7 +28,7 @@ SYSTEM_PROMPT = """你是一个数据库设计专家。
   ],
   "extraction_plan": "目标表：table_name\\n字段提取计划：\\n- field: 提取说明\\n..."
 }
-【重要】不要在 columns 中包含 id 和 created_at，这两个自动添加。
+【重要】不要在 columns 中包含系统字段 id、uuid、创建时间、更新时间，这些自动添加。
 """
 
 
@@ -67,22 +68,49 @@ def no_table_handler_agent(state: DataSpeakState) -> DataSpeakState:
     columns = schema.get("columns", [])
     extraction_plan = schema.get("extraction_plan", "")
 
-    if not table_name or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table_name):
+    if not table_name or not is_valid_identifier(table_name):
         return {**state, "final_response": f"生成的表名「{table_name}」不合法，请手动创建表后重试。"}
+    if table_name in INTERNAL_TABLES:
+        return {**state, "final_response": f"生成的表名「{table_name}」与系统保留名冲突，请重试。"}
 
-    # 过滤自动字段
-    columns = [c for c in columns if c.get("name", "").lower() not in {"id", "created_at"}]
+    # 过滤自动字段与非法字段
+    filtered_columns = []
+    seen_names = set()
+    for col in columns:
+        if not isinstance(col, dict):
+            continue
+        col_name = (col.get("name") or "").strip()
+        if not col_name or not is_valid_identifier(col_name):
+            continue
+        if col_name in {"id", "uuid", "创建时间", "更新时间"} or col_name.lower() in {"created_at", "updated_at"}:
+            continue
+        if col_name in seen_names:
+            continue
+        seen_names.add(col_name)
+        filtered_columns.append(col)
+    columns = filtered_columns
+
+    if not columns:
+        return {**state, "final_response": "未识别到可用字段，请补充至少一个合法字段。"}
 
     # 创建表
-    col_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT"]
+    col_defs = [
+        '"id" INTEGER PRIMARY KEY AUTOINCREMENT',
+        '"uuid" TEXT DEFAULT (lower(hex(randomblob(16))))',
+        '"创建时间" TEXT DEFAULT (datetime(\'now\', \'localtime\'))',
+        '"更新时间" TEXT DEFAULT (datetime(\'now\', \'localtime\'))',
+    ]
     for col in columns:
-        col_sql = f"{col['name']} {col.get('type', 'TEXT')}"
+        col_name = (col.get("name") or "").strip()
+        col_type = (col.get("type", "TEXT") or "TEXT").strip().upper()
+        if col_type not in {"TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC"}:
+            col_type = "TEXT"
+        col_sql = f"{quote_identifier(col_name)} {col_type}"
         if col.get("notnull"):
             col_sql += " NOT NULL"
         col_defs.append(col_sql)
-    col_defs.append("created_at TEXT DEFAULT (datetime('now', 'localtime'))")
 
-    sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(col_defs)})"
+    sql = f"CREATE TABLE IF NOT EXISTS {quote_identifier(table_name)} ({', '.join(col_defs)})"
     console.print(f"[bold yellow][NO_TABLE_HANDLER][/bold yellow] 创建表 SQL: {sql}")
 
     try:

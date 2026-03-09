@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from backend.state import DataSpeakState
 from backend.tools.db_tools import DBInsertTool, DBUpdateTool
 from backend.config import config_manager
+from backend.tools.schema_tools import GetTableSchemaTool, INTERNAL_TABLES, quote_identifier
 
 load_dotenv()
 
@@ -68,24 +69,37 @@ def query_agent(state: DataSpeakState) -> DataSpeakState:
     console.print("[bold cyan][QUERY][/bold cyan] 处理查询/聊天请求...")
 
     import sqlite3
-    DB_PATH = os.getenv("DB_PATH", "./dataspeak.db")
+
+    db_path = os.getenv("DB_PATH", "./dataspeak.db")
 
     # 查询时附带最近数据作为上下文
     context = ""
     if state.get("intent") == "query":
         try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM expenses ORDER BY created_at DESC LIMIT 10")
-            rows = cursor.fetchall()
-            cursor.execute("PRAGMA table_info(expenses)")
-            cols = [col[1] for col in cursor.fetchall()]
-            conn.close()
+            schema = GetTableSchemaTool().run()
+            active_table = (state.get("active_table") or "").strip()
+            user_tables = [t for t in schema.keys() if t not in INTERNAL_TABLES]
 
-            if rows:
-                context = "最近的支出记录：\n"
-                for row in rows:
-                    context += str(dict(zip(cols, row))) + "\n"
+            table_for_query = ""
+            if active_table in user_tables:
+                table_for_query = active_table
+            elif user_tables:
+                table_for_query = user_tables[0]
+
+            if table_for_query:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                quoted = quote_identifier(table_for_query)
+                cursor.execute(f"SELECT * FROM {quoted} ORDER BY rowid DESC LIMIT 10")
+                rows = cursor.fetchall()
+                cursor.execute(f"PRAGMA table_info({quoted})")
+                cols = [col[1] for col in cursor.fetchall()]
+                conn.close()
+
+                if rows:
+                    context = f"最近表「{table_for_query}」记录：\n"
+                    for row in rows:
+                        context += str(dict(zip(cols, row))) + "\n"
         except Exception:
             pass
 
@@ -110,7 +124,7 @@ def query_agent(state: DataSpeakState) -> DataSpeakState:
 
     try:
         content = _call_llm(llm, messages)
-        console.print(f"[bold cyan][QUERY][/bold cyan] 回复生成完成")
+        console.print("[bold cyan][QUERY][/bold cyan] 回复生成完成")
     except Exception as e:
         content = f"抱歉，处理您的请求时出现问题: {e}"
 

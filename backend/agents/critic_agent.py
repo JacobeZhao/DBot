@@ -23,7 +23,7 @@ SYSTEM_PROMPT_CRITIC = """你是一个数据质量检查员。
 2. **字段完整性**：
    - NOT NULL 且无默认值的字段必须有非空值。
    - 其他可选字段允许缺失或留空，不要因为“未提取出每个字段”而判 FAIL。
-   - 自动字段（id、created_at）由数据库管理，不在提取数据中出现是正常的。
+   - 自动字段（id、uuid、创建时间、更新时间，以及兼容历史字段 created_at、updated_at）由数据库管理，不在提取数据中出现是正常的。
 3. **类型匹配**：
    - INTEGER/REAL 字段：值必须是数字，不能是纯文字字符串。
    - TEXT 字段：任何文字都合法，包括"中"、"高"、"未完成"等中文描述。
@@ -132,7 +132,7 @@ def _check_required_fields_only(schema_info: dict, extracted_data: dict) -> str 
     if not isinstance(columns, list):
         return None
 
-    auto_fields = {"id", "created_at"}
+    auto_fields = {"id", "uuid", "创建时间", "更新时间", "created_at", "updated_at"}
     for c in columns:
         name = c.get("name")
         if not isinstance(name, str) or name in auto_fields:
@@ -199,7 +199,7 @@ def _is_non_required_field_missing_fail(content: str, schema_info: dict, extract
     for c in columns:
         if c.get("name") != field:
             continue
-        if field in {"id", "created_at"}:
+        if field in {"id", "uuid", "创建时间", "更新时间", "created_at", "updated_at"}:
             return True
         notnull = bool(c.get("notnull"))
         has_default = c.get("default") is not None

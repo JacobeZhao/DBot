@@ -5,6 +5,8 @@ export const LOCAL_KEYS = {
   sessions: "ds_sessions",
   sessionLimit: "ds_session_limit",
   paneLimit: "ds_session_pane_limit",
+  historyPaneVisible: "ds_history_pane_visible",
+  centerPaneWidth: "ds_center_pane_width",
 };
 
 export const DEFAULT_SETTINGS = {

@@ -30,7 +30,7 @@ Final Answer: {"table": "<目标表名>", "data": {<字段:值的JSON>}}
 - Final Answer 必须是合法的 JSON 格式
 - 金额字段只保留数字（如 35.0，不要包含货币符号）
 - 日期字段使用 YYYY-MM-DD 格式，如果用户说"昨天"请推断具体日期
-- 【重要】绝对不要包含自动生成的字段：id（自增主键）、created_at（系统时间戳）。这些字段由数据库自动处理，不得出现在 data 中
+- 【重要】绝对不要包含自动生成的系统字段：id、uuid、创建时间、更新时间（以及兼容历史字段 created_at、updated_at）。这些字段由数据库自动处理，不得出现在 data 中
 - 只输出 Final Answer 后的 JSON，不要有额外文字
 """
 

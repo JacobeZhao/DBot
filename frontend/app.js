@@ -1,4 +1,4 @@
-import { createApp, ref, reactive, computed, nextTick, onMounted } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
+import { createApp, ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
 import { DEFAULT_SETTINGS, LOCAL_KEYS, SESSION_PAGE_SIZE, MAX_PREVIEW_LEN } from "./constants.js";
 import { safeText, validateIdentifier, sanitizeIntent, normalizeErrorMessage, validateConfirmPreview } from "./utils.js";
 import { loadLocalSessions, saveLocalSession, buildSessionTitle } from "./sessionStore.js";
@@ -51,10 +51,23 @@ createApp({
 
     const inputRef = ref(null);
 
+    const LEFT_PANE_WIDTH = 232;
+    const SPLITTER_WIDTH = 8;
+    const CENTER_PANE_DEFAULT_WIDTH = 320;
+    const CENTER_PANE_MIN_WIDTH = 280;
+    const RIGHT_PANE_MIN_WIDTH = 460;
+
+    const historyPaneVisible = ref(true);
+    const centerPaneWidth = ref(CENTER_PANE_DEFAULT_WIDTH);
+    const isDraggingSplitter = ref(false);
+    let resizeStartX = 0;
+    let resizeStartWidth = CENTER_PANE_DEFAULT_WIDTH;
+
     const displayedSessions = computed(() => {
+      const existed = persistedSessions.value.find((s) => s.id === sessionId.value);
       const current = {
         id: sessionId.value,
-        title: "当前会话",
+        title: existed?.title || "当前会话",
         preview: getCurrentPreview(),
         timestamp: new Date().toISOString(),
       };
@@ -65,6 +78,21 @@ createApp({
     const remainingSessionCount = computed(() => {
       const currentTotal = 1 + persistedSessions.value.filter((s) => s.id !== sessionId.value).length;
       return Math.max(0, currentTotal - displayedSessions.value.length);
+    });
+
+    const currentSessionTitle = computed(() => {
+      const matched = displayedSessions.value.find((s) => s.id === sessionId.value)
+        || persistedSessions.value.find((s) => s.id === sessionId.value);
+      const title = safeText(matched?.title || "").trim();
+      return title || "当前会话";
+    });
+
+    const mainStyle = computed(() => {
+      const leftPaneWidth = historyPaneVisible.value ? LEFT_PANE_WIDTH : 0;
+      return {
+        "--left-pane-width": `${leftPaneWidth}px`,
+        "--center-pane-width": `${centerPaneWidth.value}px`,
+      };
     });
 
     function applyTheme(theme) {
@@ -112,14 +140,24 @@ createApp({
       return chatItems.value.find((item) => item.id === itemId);
     }
 
-    function addStep(label) {
+    function addStep(label, extra = {}) {
       const container = findItem(activeStepsId.value);
       if (!container || container.type !== "steps") return;
 
       container.steps.forEach((step) => {
         if (step.status === "active") step.status = "done";
       });
-      container.steps.push({ label: safeText(label), status: "active" });
+
+      const agent = safeText(extra.agent || "").trim();
+      const phase = safeText(extra.phase || "").trim();
+      const parts = [safeText(label).trim()].filter(Boolean);
+      if (agent) parts.push(`· ${agent}`);
+      if (phase) parts.push(`· ${phase}`);
+
+      container.steps.push({
+        label: parts.join(" "),
+        status: "active",
+      });
       scrollChatToBottom();
     }
 
@@ -129,6 +167,77 @@ createApp({
       container.steps.forEach((step) => {
         if (step.status === "active") step.status = "done";
       });
+    }
+
+    async function applyStepPatch(patch) {
+      if (!patch || typeof patch !== "object") return;
+
+      const patchType = safeText(patch.type).trim();
+      if (!patchType) return;
+
+      if (patchType === "active_table") {
+        const table = safeText(patch.table).trim();
+        if (table) {
+          currentTable.value = table;
+          await loadTableData(table);
+        }
+        return;
+      }
+
+      if (patchType === "table_overview") {
+        await loadTablesAndMaybeData();
+        return;
+      }
+
+      if (patchType === "schema" || patchType === "rows") {
+        const table = safeText(patch.table || currentTable.value).trim();
+        if (table) {
+          currentTable.value = table;
+          await loadTableData(table);
+        } else {
+          await loadTablesAndMaybeData();
+        }
+      }
+    }
+
+    async function applyDoneRefreshHint(hint, fallbackIntent = "", activeTable = "") {
+      const active = safeText(activeTable).trim();
+      if (active) {
+        currentTable.value = active;
+      }
+
+      if (hint && typeof hint === "object" && hint.refresh) {
+        const patchType = safeText(hint.patch_type || hint.hint || "").trim();
+        const table = safeText(hint.table || currentTable.value).trim();
+
+        if (patchType === "table_overview") {
+          await loadTablesAndMaybeData();
+          return;
+        }
+
+        if (patchType === "active_table" && table) {
+          currentTable.value = table;
+          await loadTableData(table);
+          return;
+        }
+
+        if (table) {
+          currentTable.value = table;
+          await loadTableData(table);
+        } else {
+          await loadTablesAndMaybeData();
+        }
+        return;
+      }
+
+      const intent = sanitizeIntent(fallbackIntent || "");
+      if (["create_table", "drop_table", "alter_table", "add_col", "drop_col", "rename_col", "list_tables"].includes(intent)) {
+        await loadTablesAndMaybeData();
+        return;
+      }
+      if (["insert", "update", "delete_data", "row_insert", "row_update", "row_delete", "cell_update"].includes(intent) && currentTable.value) {
+        await loadTableData(currentTable.value);
+      }
     }
 
     function startAssistantStreamBubble() {
@@ -203,6 +312,47 @@ createApp({
     function loadMoreSessions() {
       visibleSessionCount.value += SESSION_PAGE_SIZE;
       localStorage.setItem(LOCAL_KEYS.paneLimit, String(visibleSessionCount.value));
+    }
+
+    function clampCenterPaneWidth(rawWidth) {
+      const viewportWidth = window.innerWidth || 0;
+      const leftPaneWidth = historyPaneVisible.value ? LEFT_PANE_WIDTH : 0;
+      const maxWidth = Math.max(
+        CENTER_PANE_MIN_WIDTH,
+        viewportWidth - leftPaneWidth - RIGHT_PANE_MIN_WIDTH - SPLITTER_WIDTH
+      );
+      return Math.min(maxWidth, Math.max(CENTER_PANE_MIN_WIDTH, Math.round(rawWidth)));
+    }
+
+    function toggleHistoryPane() {
+      historyPaneVisible.value = !historyPaneVisible.value;
+      centerPaneWidth.value = clampCenterPaneWidth(centerPaneWidth.value);
+      localStorage.setItem(LOCAL_KEYS.historyPaneVisible, historyPaneVisible.value ? "1" : "0");
+      localStorage.setItem(LOCAL_KEYS.centerPaneWidth, String(centerPaneWidth.value));
+    }
+
+    function startResize(event) {
+      if (window.innerWidth <= 980 || event.button !== 0) return;
+      event.preventDefault();
+      isDraggingSplitter.value = true;
+      resizeStartX = event.clientX;
+      resizeStartWidth = centerPaneWidth.value;
+    }
+
+    function onResizeMove(event) {
+      if (!isDraggingSplitter.value) return;
+      const deltaX = event.clientX - resizeStartX;
+      centerPaneWidth.value = clampCenterPaneWidth(resizeStartWidth + deltaX);
+    }
+
+    function stopResize() {
+      if (!isDraggingSplitter.value) return;
+      isDraggingSplitter.value = false;
+      localStorage.setItem(LOCAL_KEYS.centerPaneWidth, String(centerPaneWidth.value));
+    }
+
+    function onWindowResize() {
+      centerPaneWidth.value = clampCenterPaneWidth(centerPaneWidth.value);
     }
 
     function addConfirmCard(previewText, intent) {
@@ -423,7 +573,7 @@ createApp({
         return;
       }
       if (!validateIdentifier(tableName)) {
-        appendError("表名只允许字母、数字和下划线，且不能以数字开头");
+        appendError("表名仅允许中文/字母/数字/下划线，且不能以数字开头");
         return;
       }
 
@@ -489,14 +639,22 @@ createApp({
       card.busy = true;
       addMessage("user", "确认执行");
 
-      const steps = addStepsContainer();
+      addStepsContainer();
       let finalIntent = "";
+      let donePayload = {};
 
       try {
         await streamConfirm(sessionId.value, {
-          step: (d) => addStep(d.label || d.node || "处理中"),
+          step: (d) => {
+            addStep(d.label || d.node || "处理中", { agent: d.agent, phase: d.phase });
+            if (d.patch) {
+              applyStepPatch(d.patch).catch((err) => {
+                appendError(normalizeErrorMessage(err.message));
+              });
+            }
+          },
           response_start: () => {
-            finalizeSteps(steps.id);
+            finalizeSteps();
             startAssistantStreamBubble();
           },
           token: (d) => appendAssistantToken(d.content),
@@ -507,14 +665,11 @@ createApp({
           done: (d) => {
             finalizeSteps();
             finalIntent = sanitizeIntent(d.intent || "");
+            donePayload = d || {};
           },
         });
 
-        if (["drop_table", "alter_table", "create_table"].includes(finalIntent)) {
-          await loadTablesAndMaybeData();
-        } else if (currentTable.value) {
-          await loadTableData(currentTable.value);
-        }
+        await applyDoneRefreshHint(donePayload.refresh_hint, finalIntent, donePayload.active_table || "");
 
         removeChatItem(cardId);
       } catch (err) {
@@ -556,10 +711,18 @@ createApp({
       let finalIntent = "";
       let finalError = "";
       let hadConfirm = false;
+      let donePayload = {};
 
       try {
         await streamChat(sessionId.value, text, {
-          step: (d) => addStep(d.label || d.node || "处理中"),
+          step: (d) => {
+            addStep(d.label || d.node || "处理中", { agent: d.agent, phase: d.phase });
+            if (d.patch) {
+              applyStepPatch(d.patch).catch((err) => {
+                appendError(normalizeErrorMessage(err.message));
+              });
+            }
+          },
           response_start: () => {
             finalizeSteps();
             startAssistantStreamBubble();
@@ -579,6 +742,7 @@ createApp({
             finalizeSteps();
             finalIntent = sanitizeIntent(d.intent || finalIntent);
             finalError = d.error || finalError;
+            donePayload = d || {};
           },
         });
 
@@ -593,12 +757,7 @@ createApp({
           setStatus("完成");
         }
 
-        if (["create_table", "drop_table", "alter_table"].includes(finalIntent)) {
-          await loadTablesAndMaybeData();
-        }
-        if (["insert", "update", "delete_data"].includes(finalIntent) && currentTable.value) {
-          await loadTableData(currentTable.value);
-        }
+        await applyDoneRefreshHint(donePayload.refresh_hint, finalIntent, donePayload.active_table || "");
       } catch (err) {
         finalizeSteps();
         appendError(normalizeErrorMessage(err.message), "可重试发送，或在设置中测试连接。");
@@ -652,11 +811,32 @@ createApp({
       const paneLimit = Number(localStorage.getItem(LOCAL_KEYS.paneLimit) || SESSION_PAGE_SIZE);
       visibleSessionCount.value = Math.max(SESSION_PAGE_SIZE, paneLimit);
 
+      const savedHistoryVisible = localStorage.getItem(LOCAL_KEYS.historyPaneVisible);
+      if (savedHistoryVisible !== null) {
+        historyPaneVisible.value = savedHistoryVisible !== "0";
+      }
+
+      const savedCenterWidth = Number(localStorage.getItem(LOCAL_KEYS.centerPaneWidth));
+      if (!Number.isNaN(savedCenterWidth) && savedCenterWidth > 0) {
+        centerPaneWidth.value = savedCenterWidth;
+      }
+      centerPaneWidth.value = clampCenterPaneWidth(centerPaneWidth.value);
+
+      window.addEventListener("mousemove", onResizeMove);
+      window.addEventListener("mouseup", stopResize);
+      window.addEventListener("resize", onWindowResize);
+
       resetChatWindow("你好，我是 DataSpeak。你可以直接描述你要查询、插入或更新的数据。", false);
 
       await loadSettings();
       await loadTablesAndMaybeData();
       setStatus("就绪");
+    });
+
+    onBeforeUnmount(() => {
+      window.removeEventListener("mousemove", onResizeMove);
+      window.removeEventListener("mouseup", stopResize);
+      window.removeEventListener("resize", onWindowResize);
     });
 
     return {
@@ -665,6 +845,10 @@ createApp({
       isLoading,
       displayedSessions,
       remainingSessionCount,
+      currentSessionTitle,
+      mainStyle,
+      historyPaneVisible,
+      isDraggingSplitter,
       sessionId,
       allTables,
       currentTable,
@@ -681,6 +865,8 @@ createApp({
       createNewSession,
       loadMoreSessions,
       toggleTheme,
+      toggleHistoryPane,
+      startResize,
       openSettingsModal,
       closeSettingsModal,
       loadTableData,
