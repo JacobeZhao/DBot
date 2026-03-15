@@ -1,0 +1,110 @@
+.app-container {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-header {
+  background-color: #1a1a1a;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #333;
+}
+
+.app-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.settings-button {
+  background-color: #333;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings-button:hover {
+  background-color: #444;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.left-panel {
+  width: 300px;
+  background-color: #2a2a2a;
+  border-right: 1px solid #333;
+  overflow-y: auto;
+}
+
+.center-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-panel {
+  width: 300px;
+  background-color: #2a2a2a;
+  border-left: 1px solid #333;
+  overflow-y: auto;
+}
+
+.info-panel {
+  padding: 1.5rem;
+}
+
+.info-panel h3 {
+  margin-bottom: 1rem;
+  color: #fff;
+}
+
+.info-panel p {
+  margin-bottom: 0.5rem;
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+/* 响应式设计 */
+@media (max-width: 1200px) {
+  .right-panel {
+    display: none;
+  }
+
+  .left-panel {
+    width: 250px;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    flex-direction: column;
+  }
+
+  .left-panel,
+  .center-panel,
+  .right-panel {
+    width: 100%;
+    height: auto;
+    border: none;
+    border-bottom: 1px solid #333;
+  }
+
+  .right-panel {
+    display: block;
+  }
+}

@@ -1,0 +1,272 @@
+.data-table {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: #1e1e1e;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.data-table.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+}
+
+.empty-message {
+  color: #888;
+  font-size: 1rem;
+}
+
+.table-info {
+  padding: 0.75rem 1rem;
+  background-color: #2a2a2a;
+  border-bottom: 1px solid #444;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.row-count {
+  color: #aaa;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.page-size-select {
+  padding: 0.25rem 0.5rem;
+  background-color: #1e1e1e;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.page-size-select:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+.page-navigation {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.page-button {
+  padding: 0.25rem 0.5rem;
+  background-color: #444;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-width: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.page-button:hover:not(:disabled) {
+  background-color: #555;
+}
+
+.page-button:disabled {
+  background-color: #333;
+  color: #888;
+  cursor: not-allowed;
+}
+
+.page-info {
+  color: #aaa;
+  font-size: 0.85rem;
+  padding: 0 0.5rem;
+}
+
+.table-container {
+  flex: 1;
+  overflow: auto;
+}
+
+.data-table-content {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table-content th,
+.data-table-content td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #444;
+}
+
+.data-table-content th {
+  background-color: #2a2a2a;
+  color: #aaa;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.data-table-content th:hover {
+  background-color: #333;
+}
+
+.column-header {
+  min-width: 100px;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.column-name {
+  font-size: 0.9rem;
+  color: white;
+}
+
+.sort-icon {
+  font-size: 0.8rem;
+  color: #888;
+  margin-left: 0.5rem;
+}
+
+.column-type {
+  font-size: 0.75rem;
+  color: #888;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+.data-table-content td {
+  color: #f0f0f0;
+  vertical-align: top;
+}
+
+.data-row:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.data-cell {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-cell:hover {
+  white-space: normal;
+  overflow: visible;
+  position: relative;
+  z-index: 5;
+  background-color: #1e1e1e;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.null-value {
+  color: #888;
+  font-style: italic;
+}
+
+.table-footer {
+  padding: 0.75rem 1rem;
+  background-color: #2a2a2a;
+  border-top: 1px solid #444;
+}
+
+.page-info-footer {
+  color: #aaa;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* 自定义滚动条 */
+.table-container::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 5px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+.table-container::-webkit-scrollbar-corner {
+  background: #2a2a2a;
+}
+
+/* 响应式调整 */
+@media (max-width: 1200px) {
+  .data-cell {
+    max-width: 200px;
+  }
+}
+
+@media (max-width: 768px) {
+  .table-info {
+    padding: 0.5rem 0.75rem;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+
+  .pagination-controls {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+
+  .page-navigation {
+    justify-content: center;
+  }
+
+  .data-table-content th,
+  .data-table-content td {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .column-header {
+    min-width: 80px;
+  }
+
+  .column-name {
+    font-size: 0.85rem;
+  }
+
+  .column-type {
+    font-size: 0.7rem;
+  }
+
+  .data-cell {
+    max-width: 150px;
+  }
+
+  .table-footer {
+    padding: 0.5rem 0.75rem;
+  }
+}

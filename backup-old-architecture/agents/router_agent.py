@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import openai
 from dotenv import load_dotenv
@@ -48,14 +48,22 @@ SYSTEM_PROMPT_ROUTER = """你是一个意图分类器。用户会输入自然语
 - query：查询/统计表数据
 - chat：纯闲聊或与数据库无关
 
-## 判断原则
-1. 只要用户描述了具体可落库的数据（金额、事项、日期、名称等），优先判断为 insert。
-2. “删表/移除表”是 drop_table；“删记录/删数据”是 delete_data。
-3. 仅当与数据库操作无关时才判断为 chat。
-4. 若有歧义，优先选择最可能执行数据库操作的意图。
+## 输出要求
+只返回 JSON，不要有额外文本，格式：
+{
+  "intent": "<create_table|drop_table|alter_table|insert|update|delete_data|list_tables|query|chat>",
+  "confidence": 0.0,
+  "candidates": [
+    {"intent": "query", "confidence": 0.81},
+    {"intent": "list_tables", "confidence": 0.14}
+  ],
+  "reason": "简短中文原因"
+}
 
-只返回如下 JSON，不要有任何额外文字：
-{"intent": "<create_table|drop_table|alter_table|insert|update|delete_data|list_tables|query|chat>"}
+其中：
+1) confidence 范围 0~1。
+2) candidates 为按置信度降序的 top-k（建议 2~3）。
+3) 若不确定，也必须给出最可能 intent 和候选。
 """
 
 
@@ -94,10 +102,8 @@ def _score_message_relevance(content: str, current_tokens: set[str], index: int,
     msg_tokens = _tokenize(content)
     overlap = len(current_tokens & msg_tokens)
 
-    # 最近消息更重要
     recency_bonus = (index + 1) / max(total, 1)
 
-    # 指代词提升权重
     reference_markers = ("第一个", "上面", "刚才", "那个", "它", "这条", "改", "删", "完成")
     marker_bonus = 1.5 if any(marker in content for marker in reference_markers) else 0.0
 
@@ -111,7 +117,6 @@ def _select_relevant_history(chat_history: List[Dict], user_input: str, max_pair
     max_pairs = max(1, min(max_pairs, 8))
     max_messages = max_pairs * 2
 
-    # 始终保留最近 2 条，避免丢失短上下文引用
     tail = chat_history[-2:]
 
     current_tokens = _tokenize(user_input)
@@ -127,11 +132,9 @@ def _select_relevant_history(chat_history: List[Dict], user_input: str, max_pair
         score = _score_message_relevance(content, current_tokens, idx, total)
         scored.append((idx, score, {"role": role, "content": content}))
 
-    # 先取分数高的，再按原顺序重排
     scored.sort(key=lambda x: x[1], reverse=True)
     selected = {idx: msg for idx, _, msg in scored[:max_messages]}
 
-    # 合并强制保留的最近消息
     for offset, msg in enumerate(tail, start=total - len(tail)):
         role = msg.get("role")
         if role in {"user", "assistant"}:
@@ -154,66 +157,150 @@ def _format_history_for_prompt(history: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def _parse_intent(content: str) -> str:
-    raw = (content or "").strip()
+def _normalize_confidence(value: Any, default: float = 0.0) -> float:
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        conf = default
+    if conf < 0:
+        return 0.0
+    if conf > 1:
+        return 1.0
+    return conf
 
-    # 优先尝试纯 JSON
+
+def _normalize_candidates(candidates: Any, fallback_intent: str, fallback_conf: float) -> list[dict]:
+    normalized: list[dict] = []
+    if isinstance(candidates, list):
+        for item in candidates:
+            if isinstance(item, dict):
+                intent = (item.get("intent") or "").strip()
+                if intent not in ALLOWED_INTENTS:
+                    continue
+                normalized.append(
+                    {
+                        "intent": intent,
+                        "confidence": _normalize_confidence(item.get("confidence"), default=0.0),
+                    }
+                )
+            elif isinstance(item, str):
+                intent = item.strip()
+                if intent in ALLOWED_INTENTS:
+                    normalized.append({"intent": intent, "confidence": 0.0})
+
+    if fallback_intent in ALLOWED_INTENTS and not any(c["intent"] == fallback_intent for c in normalized):
+        normalized.append({"intent": fallback_intent, "confidence": fallback_conf})
+
+    if not normalized:
+        normalized = [{"intent": fallback_intent if fallback_intent in ALLOWED_INTENTS else "chat", "confidence": fallback_conf}]
+
+    normalized.sort(key=lambda x: x.get("confidence", 0.0), reverse=True)
+    return normalized[:3]
+
+
+def _parse_router_output(content: str) -> dict:
+    raw = (content or "").strip()
+    parsed = {}
+
     try:
         parsed = json.loads(raw)
-        intent = parsed.get("intent", "chat")
-        if intent in ALLOWED_INTENTS:
-            return intent
     except Exception:
-        pass
-
-    # 回退：提取第一个 JSON 块
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        try:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
             parsed = json.loads(match.group(0))
-            intent = parsed.get("intent", "chat")
-            if intent in ALLOWED_INTENTS:
-                return intent
-        except Exception:
-            pass
 
-    return "chat"
+    intent = (parsed.get("intent") or "").strip()
+    if intent not in ALLOWED_INTENTS:
+        intent = "chat"
+
+    confidence = _normalize_confidence(parsed.get("confidence"), default=0.0)
+    candidates = _normalize_candidates(parsed.get("candidates"), intent, confidence)
+    reason = (parsed.get("reason") or "").strip()
+
+    return {
+        "intent": intent,
+        "confidence": confidence,
+        "candidates": candidates,
+        "reason": reason,
+    }
 
 
-def _heuristic_intent(user_input: str) -> str:
+def _heuristic_intent(user_input: str) -> dict:
     text = (user_input or "").strip().lower()
     if not text:
-        return "chat"
+        return {
+            "intent": "chat",
+            "confidence": 0.35,
+            "candidates": [{"intent": "chat", "confidence": 0.35}],
+            "reason": "空输入，回退为 chat",
+        }
+
+    score = {intent: 0.0 for intent in ALLOWED_INTENTS}
+
+    def bump(intent: str, value: float):
+        score[intent] = score.get(intent, 0.0) + value
 
     if any(k in text for k in ["列出表", "有哪些表", "所有表", "查看表", "list tables", "show tables"]):
-        return "list_tables"
+        bump("list_tables", 5.0)
 
     if any(k in text for k in ["新建表", "创建表", "建表", "create table"]):
-        return "create_table"
+        bump("create_table", 5.0)
 
     if any(k in text for k in ["删除表", "删表", "drop table"]):
-        return "drop_table"
+        bump("drop_table", 5.0)
 
     if any(k in text for k in ["加字段", "新增字段", "删除字段", "改字段", "重命名字段", "alter table", "修改表结构"]):
-        return "alter_table"
+        bump("alter_table", 4.5)
 
     if any(k in text for k in ["删除记录", "删数据", "删除数据", "delete from"]):
-        return "delete_data"
+        bump("delete_data", 4.0)
 
     if any(k in text for k in ["更新", "修改", "设为", "改成", "update "]):
-        return "update"
+        bump("update", 3.8)
+
+    if any(k in text for k in ["添加", "新增", "记一笔", "插入", "insert "]):
+        bump("insert", 3.6)
 
     if any(k in text for k in ["查询", "统计", "多少", "查一下", "select ", "where "]):
-        return "query"
-
-    if any(k in text for k in ["添加", "新增", "记录", "记一笔", "插入", "insert "]):
-        return "insert"
+        bump("query", 3.2)
 
     db_markers = ["表", "字段", "数据", "数据库", "记录", "行", "列", "sql"]
     if any(k in text for k in db_markers):
-        return "query"
+        bump("query", 1.2)
 
-    return "chat"
+    if max(score.values()) <= 0:
+        bump("chat", 2.0)
+
+    ranked = sorted(score.items(), key=lambda kv: kv[1], reverse=True)
+    top_score = ranked[0][1]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+    margin = max(0.0, top_score - second_score)
+
+    if top_score >= 5.0 and margin >= 1.0:
+        confidence = 0.92
+    elif top_score >= 3.5 and margin >= 0.8:
+        confidence = 0.82
+    elif top_score >= 2.0:
+        confidence = 0.68
+    else:
+        confidence = 0.55
+
+    candidates = []
+    for intent, intent_score in ranked[:3]:
+        if intent_score <= 0:
+            continue
+        c = min(0.98, max(0.05, intent_score / max(top_score, 1e-6) * confidence))
+        candidates.append({"intent": intent, "confidence": round(c, 3)})
+
+    if not candidates:
+        candidates = [{"intent": "chat", "confidence": confidence}]
+
+    return {
+        "intent": ranked[0][0],
+        "confidence": round(confidence, 3),
+        "candidates": candidates,
+        "reason": "规则回退判定",
+    }
 
 
 def router_agent(state: DataSpeakState) -> DataSpeakState:
@@ -252,26 +339,51 @@ def router_agent(state: DataSpeakState) -> DataSpeakState:
 
     messages.append({"role": "user", "content": f"当前用户输入：{state['user_input']}"})
 
+    heuristic_result = _heuristic_intent(state.get("user_input", ""))
+
     try:
         content = _call_llm(llm, messages)
-        intent = _parse_intent(content)
+        parsed = _parse_router_output(content)
+
+        intent = parsed["intent"]
+        confidence = parsed["confidence"]
+        candidates = parsed["candidates"]
+        reason = parsed["reason"] or "LLM 判定"
+
+        if intent not in ALLOWED_INTENTS:
+            intent = heuristic_result["intent"]
+            confidence = heuristic_result["confidence"]
+            candidates = heuristic_result["candidates"]
+            reason = "LLM 意图无效，回退规则"
+
+        if confidence <= 0:
+            confidence = heuristic_result["confidence"]
+        if not candidates:
+            candidates = heuristic_result["candidates"]
+
     except Exception as e:
-        heuristic = _heuristic_intent(state.get("user_input", ""))
-        console.print(f"[bold green][ROUTER][/bold green] 解析失败，使用规则回退: {e} -> {heuristic}")
-        intent = heuristic
+        console.print(f"[bold green][ROUTER][/bold green] 解析失败，使用规则回退: {e}")
+        intent = heuristic_result["intent"]
+        confidence = heuristic_result["confidence"]
+        candidates = heuristic_result["candidates"]
+        reason = heuristic_result["reason"]
 
-    if intent not in ALLOWED_INTENTS:
-        intent = _heuristic_intent(state.get("user_input", ""))
+    confidence = _normalize_confidence(confidence, default=heuristic_result["confidence"])
+    candidates = _normalize_candidates(candidates, intent, confidence)
 
-    if intent == "chat":
-        heuristic = _heuristic_intent(state.get("user_input", ""))
-        if heuristic != "chat":
-            intent = heuristic
-        elif any(k in (state.get("user_input", "")).lower() for k in ["表", "字段", "数据", "数据库", "记录", "sql"]):
-            intent = "query"
+    if confidence < 0.7:
+        top = candidates[0]["intent"] if candidates else intent
+        intent = top if top in ALLOWED_INTENTS else intent
 
-    if state.get("user_input") and len((state.get("user_input") or "").strip()) <= 2 and intent == "chat":
-        intent = "query"
+    step_label = f"意图={intent} 置信={confidence:.2f}"
+    console.print(f"[bold green][ROUTER][/bold green] {step_label}")
 
-    console.print(f"[bold green][ROUTER][/bold green] 意图识别结果: [yellow]{intent}[/yellow]")
-    return {**state, "intent": intent, "step_agent": "意图识别", "step_phase": "thought"}
+    return {
+        **state,
+        "intent": intent,
+        "intent_confidence": confidence,
+        "intent_candidates": candidates,
+        "routing_reason": reason,
+        "step_agent": "意图识别",
+        "step_phase": "thought",
+    }

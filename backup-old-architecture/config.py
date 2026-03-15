@@ -1,45 +1,22 @@
-"""
-扩展的配置管理器，支持DeepSeek和OpenAI双配置
-
-设计目标：
-1. 支持多个LLM提供商（OpenAI, DeepSeek等）
-2. 向后兼容现有配置
-3. 提供统一的LLM参数获取接口
-"""
-
 import json
 import os
 import sqlite3
 import threading
-from enum import Enum
 from typing import Any, Dict, Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-class LLMProvider(Enum):
-    """LLM提供商枚举"""
-    OPENAI = "openai"
-    DEEPSEEK = "deepseek"
-    # 可以扩展其他提供商
+class ConfigManager:
+    """运行时配置管理：.env 默认值 + 数据库覆盖值。"""
 
-
-class ExtendedConfigManager:
-    """
-    扩展的配置管理器，支持多个LLM提供商
-    """
-
-    SENSITIVE_KEYS = {"openai_api_key", "deepseek_api_key"}
+    SENSITIVE_KEYS = {"openai_api_key"}
     KEY_ALIASES = {
-        # OpenAI 别名
         "api_key": "openai_api_key",
         "base_url": "openai_base_url",
         "model": "openai_model",
-        # DeepSeek 别名
-        "deepseek_key": "deepseek_api_key",
-        "deepseek_url": "deepseek_base_url",
-        "deepseek_model": "deepseek_model",
     }
 
     def __init__(self):
@@ -51,11 +28,7 @@ class ExtendedConfigManager:
         self.user_config = self._load_db_config()
         self.cache = self._merge_configs()
 
-        # 默认LLM提供商（可从配置读取）
-        self.default_provider = LLMProvider.DEEPSEEK  # 默认使用DeepSeek
-
     def _load_env_defaults(self) -> Dict[str, Any]:
-        """加载环境变量默认值"""
         def _safe_float(value: str, fallback: float) -> float:
             try:
                 return float(value)
@@ -68,46 +41,16 @@ class ExtendedConfigManager:
             except (TypeError, ValueError):
                 return fallback
 
-        def _safe_bool(value: str) -> bool:
-            return value.lower() in {"1", "true", "yes", "on"}
-
-        defaults = {
-            # OpenAI 配置
+        return {
             "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
             "openai_base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             "openai_model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-
-            # DeepSeek 配置
-            "deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", ""),
-            "deepseek_base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-            "deepseek_model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-
-            # 通用配置
             "temperature": _safe_float(os.getenv("TEMPERATURE", "0.0"), 0.0),
             "max_history_length": _safe_int(os.getenv("MAX_HISTORY_LENGTH", "20"), 20),
-            "router_use_history": _safe_bool(os.getenv("ROUTER_USE_HISTORY", "true")),
+            "router_use_history": os.getenv("ROUTER_USE_HISTORY", "true").lower() in {"1", "true", "yes", "on"},
             "router_history_pairs": _safe_int(os.getenv("ROUTER_HISTORY_PAIRS", "5"), 5),
             "db_path": os.getenv("DB_PATH", "./dataspeak.db"),
-
-            # 自动执行配置
-            "auto_execute_enabled": _safe_bool(os.getenv("AUTO_EXECUTE_ENABLED", "false")),
-            "auto_execute_threshold": _safe_float(os.getenv("AUTO_EXECUTE_THRESHOLD", "0.8"), 0.8),
-            "default_llm_provider": os.getenv("DEFAULT_LLM_PROVIDER", "deepseek"),
         }
-
-        # 解析自动执行允许的操作列表
-        allowed_ops = os.getenv("AUTO_EXECUTE_ALLOWED_OPERATIONS", "query_data,get_schema,list_tables")
-        defaults["auto_execute_allowed_operations"] = [
-            op.strip() for op in allowed_ops.split(",") if op.strip()
-        ]
-
-        # 解析排除的表列表
-        exclude_tables = os.getenv("AUTO_EXECUTE_EXCLUDE_TABLES", "_app_config,_table_metadata")
-        defaults["auto_execute_exclude_tables"] = [
-            table.strip() for table in exclude_tables.split(",") if table.strip()
-        ]
-
-        return defaults
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -115,7 +58,6 @@ class ExtendedConfigManager:
         return conn
 
     def _ensure_config_table(self):
-        """确保配置表存在（复用现有表）"""
         conn = self._connect()
         try:
             conn.execute(
@@ -134,7 +76,6 @@ class ExtendedConfigManager:
             conn.close()
 
     def _deserialize_value(self, value_str: str, value_type: str) -> Any:
-        """反序列化存储的值"""
         if value_type == "int":
             return int(value_str)
         if value_type == "float":
@@ -146,7 +87,6 @@ class ExtendedConfigManager:
         return value_str
 
     def _serialize_value(self, value: Any) -> tuple[str, str]:
-        """序列化值以便存储"""
         if isinstance(value, bool):
             return str(value).lower(), "bool"
         if isinstance(value, int):
@@ -158,7 +98,6 @@ class ExtendedConfigManager:
         return str(value), "str"
 
     def _load_db_config(self) -> Dict[str, Any]:
-        """从数据库加载用户配置"""
         config: Dict[str, Any] = {}
         conn = self._connect()
         try:
@@ -176,110 +115,54 @@ class ExtendedConfigManager:
         return config
 
     def _merge_configs(self) -> Dict[str, Any]:
-        """合并默认配置和用户配置"""
         merged = self.defaults.copy()
         merged.update(self.user_config)
         return merged
 
     def _normalize_key(self, key: str) -> str:
-        """规范化键名（处理别名）"""
         return self.KEY_ALIASES.get(key, key)
 
     def _validate(self, key: str, value: Any) -> tuple[bool, str]:
-        """验证配置值"""
-        # API密钥验证
-        if key in {"openai_api_key", "deepseek_api_key"}:
+        if key in {"openai_api_key", "openai_model", "openai_base_url"}:
             if not isinstance(value, str):
                 return False, f"{key} 必须是字符串"
-            # 允许空字符串（表示不使用该提供商）
-            return True, ""
-
-        # 模型验证
-        if key in {"openai_model", "deepseek_model"}:
-            if not isinstance(value, str):
-                return False, f"{key} 必须是字符串"
-            if not value.strip():
-                return False, f"{key} 不能为空"
-            return True, ""
-
-        # API端点验证
-        if key in {"openai_base_url", "deepseek_base_url"}:
-            if not isinstance(value, str):
-                return False, f"{key} 必须是字符串"
-            trimmed = value.strip()
-            if trimmed and not (trimmed.startswith("http://") or trimmed.startswith("https://")):
-                return False, f"{key} 必须以 http:// 或 https:// 开头"
-            return True, ""
-
-        # 温度验证
-        if key == "temperature":
+            if key == "openai_model" and not value.strip():
+                return False, "openai_model 不能为空"
+            if key == "openai_base_url":
+                trimmed = value.strip()
+                if trimmed and not (trimmed.startswith("http://") or trimmed.startswith("https://")):
+                    return False, "openai_base_url 必须以 http:// 或 https:// 开头"
+        elif key == "temperature":
             try:
                 num = float(value)
             except (TypeError, ValueError):
                 return False, "temperature 必须是数字"
             if num < 0 or num > 2:
                 return False, "temperature 必须在 0.0 到 2.0 之间"
-            return True, ""
-
-        # 历史长度验证
-        if key == "max_history_length":
+        elif key == "max_history_length":
             try:
                 num = int(value)
             except (TypeError, ValueError):
                 return False, "max_history_length 必须是整数"
             if num < 1 or num > 200:
                 return False, "max_history_length 必须在 1 到 200 之间"
-            return True, ""
-
-        # 历史对数验证
-        if key == "router_history_pairs":
+        elif key == "router_history_pairs":
             try:
                 num = int(value)
             except (TypeError, ValueError):
                 return False, "router_history_pairs 必须是整数"
             if num < 1 or num > 8:
                 return False, "router_history_pairs 必须在 1 到 8 之间"
-            return True, ""
-
-        # 布尔值验证
-        if key in {"router_use_history", "auto_execute_enabled"}:
+        elif key == "router_use_history":
             if not isinstance(value, (bool, str, int)):
-                return False, f"{key} 必须是布尔值"
-            return True, ""
+                return False, "router_use_history 必须是布尔值"
 
-        # 阈值验证
-        if key == "auto_execute_threshold":
-            try:
-                num = float(value)
-            except (TypeError, ValueError):
-                return False, "auto_execute_threshold 必须是数字"
-            if num < 0 or num > 1:
-                return False, "auto_execute_threshold 必须在 0.0 到 1.0 之间"
-            return True, ""
-
-        # 列表验证
-        if key in {"auto_execute_allowed_operations", "auto_execute_exclude_tables"}:
-            if not isinstance(value, list):
-                return False, f"{key} 必须是列表"
-            return True, ""
-
-        # 提供商验证
-        if key == "default_llm_provider":
-            if not isinstance(value, str):
-                return False, "default_llm_provider 必须是字符串"
-            if value not in {"openai", "deepseek"}:
-                return False, "default_llm_provider 必须是 'openai' 或 'deepseek'"
-            return True, ""
-
-        return True, ""  # 默认通过验证
+        return True, ""
 
     def get(self, key: str, default: Any = None) -> Any:
-        """获取配置值"""
-        normalized_key = self._normalize_key(key)
-        return self.cache.get(normalized_key, default)
+        return self.cache.get(key, default)
 
     def _mask_value(self, key: str, value: Any) -> Any:
-        """掩码敏感值"""
         if key not in self.SENSITIVE_KEYS:
             return value
         if not value:
@@ -290,31 +173,11 @@ class ExtendedConfigManager:
         return f"{text[:4]}...{text[-4:]}"
 
     def get_all(self) -> Dict[str, Any]:
-        """获取所有配置（敏感值已掩码）"""
         return {k: self._mask_value(k, v) for k, v in self.cache.items()}
 
-    def get_llm_params(self, provider: Optional[LLMProvider] = None) -> Dict[str, Any]:
-        """
-        获取LLM参数
-
-        Args:
-            provider: LLM提供商，如果为None则使用默认提供商
-
-        Returns:
-            LLM参数字典
-        """
-        if provider is None:
-            provider_name = self.get("default_llm_provider", "deepseek")
-            provider = LLMProvider(provider_name)
-
-        if provider == LLMProvider.OPENAI:
-            base_url = self.get("openai_base_url") or "https://api.openai.com/v1"
-            model = self.get("openai_model") or "gpt-4o-mini"
-            api_key = self.get("openai_api_key", "")
-        else:  # DeepSeek
-            base_url = self.get("deepseek_base_url") or "https://api.deepseek.com/v1"
-            model = self.get("deepseek_model") or "deepseek-chat"
-            api_key = self.get("deepseek_api_key", "")
+    def get_llm_params(self) -> Dict[str, Any]:
+        base_url = self.get("openai_base_url") or "https://api.openai.com/v1"
+        model = self.get("openai_model") or "gpt-4o-mini"
 
         try:
             temperature = float(self.get("temperature", 0.0))
@@ -327,24 +190,13 @@ class ExtendedConfigManager:
             temperature = 2.0
 
         return {
-            "api_key": api_key,
+            "api_key": self.get("openai_api_key", ""),
             "base_url": base_url,
             "model": model,
             "temperature": temperature,
-            "provider": provider.value
-        }
-
-    def get_auto_execute_config(self) -> Dict[str, Any]:
-        """获取自动执行配置"""
-        return {
-            "enabled": self.get("auto_execute_enabled", False),
-            "threshold": self.get("auto_execute_threshold", 0.8),
-            "allowed_operations": self.get("auto_execute_allowed_operations", []),
-            "exclude_tables": self.get("auto_execute_exclude_tables", []),
         }
 
     def update(self, key: str, value: Any, description: str = "") -> bool:
-        """更新配置"""
         normalized_key = self._normalize_key(key)
         ok, _ = self._validate(normalized_key, value)
         if not ok:
@@ -380,7 +232,6 @@ class ExtendedConfigManager:
         return True
 
     def batch_update(self, updates: Dict[str, Any]) -> bool:
-        """批量更新配置"""
         if not isinstance(updates, dict):
             return False
 
@@ -421,7 +272,6 @@ class ExtendedConfigManager:
         return True
 
     def reset_to_default(self, key: str) -> bool:
-        """重置配置到默认值"""
         normalized_key = self._normalize_key(key)
         with self._lock:
             conn = self._connect()
@@ -442,28 +292,33 @@ class ExtendedConfigManager:
 
         return True
 
-    def test_connection(self, provider: LLMProvider, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        测试LLM连接
+    def _normalize_test_config(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not config:
+            return self.get_llm_params()
 
-        Args:
-            provider: LLM提供商
-            config: 可选的自定义配置
+        normalized = self.get_llm_params()
 
-        Returns:
-            测试结果
-        """
+        mapped = {
+            "api_key": config.get("api_key", config.get("openai_api_key", normalized.get("api_key"))),
+            "base_url": config.get("base_url", config.get("openai_base_url", normalized.get("base_url"))),
+            "model": config.get("model", config.get("openai_model", normalized.get("model"))),
+            "temperature": config.get("temperature", normalized.get("temperature", 0.0)),
+        }
+
+        try:
+            mapped["temperature"] = float(mapped.get("temperature", 0.0))
+        except (TypeError, ValueError):
+            mapped["temperature"] = 0.0
+
+        return mapped
+
+    def test_connection(self, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         import openai
 
-        # 获取配置
-        if config:
-            test_config = config
-        else:
-            test_config = self.get_llm_params(provider)
-
+        test_config = self._normalize_test_config(config)
         api_key = test_config.get("api_key")
         base_url = test_config.get("base_url")
-        model = test_config.get("model")
+        model = test_config.get("model", "gpt-4o-mini")
 
         if not api_key:
             return {"success": False, "message": "API 密钥为空"}
@@ -483,17 +338,11 @@ class ExtendedConfigManager:
                 content = response.choices[0].message.content or ""
             return {
                 "success": True,
-                "message": f"{provider.value} 连接测试成功，模型: {model}",
+                "message": f"连接测试成功，模型: {model}",
                 "response": content,
-                "provider": provider.value
             }
         except Exception as e:
-            return {
-                "success": False,
-                "message": f"{provider.value} 连接测试失败: {str(e)}",
-                "provider": provider.value
-            }
+            return {"success": False, "message": f"连接测试失败: {str(e)}"}
 
 
-# 全局配置管理器实例
-extended_config_manager = ExtendedConfigManager()
+config_manager = ConfigManager()

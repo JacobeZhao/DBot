@@ -7,14 +7,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Setup
 - Install dependencies:
   - `python -m pip install -r requirements.txt`
+- Copy environment variables:
+  - `cp .env.example .env` (or create `.env` with required variables)
+- Required environment variables:
+  - `OPENAI_API_KEY`: Your OpenAI API key
+  - `OPENAI_MODEL`: Model name (default: `gpt-4o-mini`)
+  - `DB_PATH`: SQLite database file path (default: `./dataspeak.db`)
+  - `OPENAI_BASE_URL`: Optional API endpoint (default: `https://api.openai.com/v1`)
+  - `TEMPERATURE`: LLM temperature (default: `0.0`)
+  - `MAX_HISTORY_LENGTH`: Maximum chat history length (default: `20`)
+  - `ROUTER_USE_HISTORY`: Whether router uses history (default: `true`)
+  - `ROUTER_HISTORY_PAIRS`: Number of history pairs (default: `5`)
 
 ### Run the app (backend + frontend static files)
 - From repo root:
   - `python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --app-dir .`
+  - Add `--reload` for development hot reload
 - Open:
   - App UI: `http://127.0.0.1:8000/`
   - API docs: `http://127.0.0.1:8000/docs`
   - Health: `http://127.0.0.1:8000/health`
+- Frontend static files are served from `/static` (auto-mounted from `frontend/` directory)
 
 ### Database reset (common during local development)
 - DB file is controlled by `DB_PATH` (default `./dataspeak.db`)
@@ -31,12 +44,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## High-level architecture
 
-## Overview
+### Overview
 - Single-process FastAPI app serves both API and static frontend (`backend/main.py`).
 - Core logic is a LangGraph workflow with multiple intent-specific agents (`backend/agent_graph.py`).
+- Agents are defined in `backend/agents/` with naming pattern `*_agent.py`.
 - Storage is SQLite (`dataspeak.db` by default) plus in-memory session state for chat history and pending confirmations.
 
-## Request/response flow
+### Request/response flow
 - `POST /chat`:
   - Builds initial `DataSpeakState` with `chat_history` from server memory.
   - Streams graph progress via SSE (`type: step`) as each node executes.
@@ -48,7 +62,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `POST /cancel/{session_id}`:
   - Cancels staged write operation.
 
-## LangGraph workflow structure
+### LangGraph workflow structure
 - Entry: `router` (intent classification from user input + recent chat history).
 - Intent routing:
   - `insert|update` → `planner` → `extractor` → `critic` → `confirm_preview`
@@ -61,13 +75,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Critic retry loop:
   - `FAIL` can re-run `extractor` up to 2 retries, then `error_end`.
 
-## State and confirmation model
+### State and confirmation model
 - Shared graph state type: `DataSpeakState` (`backend/state.py`).
+- Session state (chat history, pending confirmations) is stored in memory and lost on server restart.
 - Confirmation is explicit:
   - `confirm_preview_node` sets `needs_confirmation=True` and human-readable preview.
   - Actual DB mutation happens only after `/confirm/{session_id}`.
 
-## Database and metadata model
+### Database and metadata model
 - Base tables initialized in `backend/database.py`:
   - `todos` (default user table)
   - `_table_metadata` (description + aliases for semantic matching)
@@ -76,7 +91,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Schema/metadata helpers live in `backend/tools/schema_tools.py`.
 - Insert/update primitives live in `backend/tools/db_tools.py`.
 
-## Configuration model
+### Configuration model
 - Runtime config manager: `backend/config.py` (`ConfigManager` singleton as `config_manager`).
 - Merge order: `.env` defaults + DB overrides from `_app_config`.
 - Config API endpoints in `backend/main.py`:
@@ -107,4 +122,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo-specific notes
 - No README/cursor/copilot instruction files were found at the time this guide was generated.
-- `config.yaml` exists but is not part of this FastAPI runtime path in current code.
+- `config.yaml` exists but is not part of this FastAPI runtime path in current code (likely leftover from LiteLLM proxy configuration).
+- `demo.py` contains unrelated algorithm code and is not part of the main application.
+- Internal SQLite tables: `checkpoints`, `writes`, `checkpoint_blobs`, `checkpoint_migrations`, `_table_metadata`, `_app_config` (configuration storage).
