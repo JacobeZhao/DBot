@@ -56,7 +56,7 @@ const apiService = {
   // 健康检查
   async healthCheck() {
     try {
-      const response = await axios.get('http://127.0.0.1:8001/health')
+      const response = await axios.get('http://127.0.0.1:8000/health')
       return response.data
     } catch (error) {
       console.error('健康检查失败:', error)

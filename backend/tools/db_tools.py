@@ -59,14 +59,12 @@ def _row_to_serializable_dict(row) -> Dict[str, Any]:
     Returns:
         可序列化的字典
     """
-    if hasattr(row, '_fields'):
-        # sqlite3.Row对象
-        row_dict = {key: _ensure_serializable(row[key]) for key in row._fields}
+    if isinstance(row, sqlite3.Row):
+        # sqlite3.Row对象 — 使用 keys() 方法
+        row_dict = {key: _ensure_serializable(row[key]) for key in row.keys()}
     elif isinstance(row, dict):
-        # 已经是字典，确保值可序列化
         row_dict = {key: _ensure_serializable(value) for key, value in row.items()}
     else:
-        # 其他类型，尝试转换为字符串
         row_dict = {"value": _ensure_serializable(row)}
 
     return row_dict

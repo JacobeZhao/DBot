@@ -5,123 +5,110 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development commands
 
 ### Setup
-- Install dependencies:
-  - `python -m pip install -r requirements.txt`
-- Copy environment variables:
-  - `cp .env.example .env` (or create `.env` with required variables)
-- Required environment variables:
-  - `OPENAI_API_KEY`: Your OpenAI API key
-  - `OPENAI_MODEL`: Model name (default: `gpt-4o-mini`)
-  - `DB_PATH`: SQLite database file path (default: `./dataspeak.db`)
-  - `OPENAI_BASE_URL`: Optional API endpoint (default: `https://api.openai.com/v1`)
-  - `TEMPERATURE`: LLM temperature (default: `0.0`)
-  - `MAX_HISTORY_LENGTH`: Maximum chat history length (default: `20`)
-  - `ROUTER_USE_HISTORY`: Whether router uses history (default: `true`)
-  - `ROUTER_HISTORY_PAIRS`: Number of history pairs (default: `5`)
+- Install Python dependencies: `python -m pip install -r requirements.txt`
+- Create `.env` from `.env.example` and fill in API keys
+- Required env vars:
+  - `DEEPSEEK_API_KEY`: DeepSeek API key (primary LLM provider)
+  - `DEEPSEEK_BASE_URL`: DeepSeek endpoint (default: `https://api.deepseek.com/v1`)
+  - `DEEPSEEK_MODEL`: Model name (default: `deepseek-chat`)
+  - `OPENAI_API_KEY`: OpenAI API key (optional, legacy)
+  - `DB_PATH`: SQLite database path (default: `./dataspeak.db`)
+  - `DEFAULT_LLM_PROVIDER`: `deepseek` or `openai` (default: `deepseek`)
+  - `AUTO_EXECUTE_ENABLED`: Auto-execute safe tool calls (default: `false`)
 
-### Run the app (backend + frontend static files)
-- From repo root:
-  - `python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --app-dir .`
-  - Add `--reload` for development hot reload
-- Open:
-  - App UI: `http://127.0.0.1:8000/`
-  - API docs: `http://127.0.0.1:8000/docs`
-  - Health: `http://127.0.0.1:8000/health`
-- Frontend static files are served from `/static` (auto-mounted from `frontend/` directory)
+### Run backend
+```bash
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --app-dir . --reload
+```
+- App root: `http://127.0.0.1:8000/`
+- API docs: `http://127.0.0.1:8000/docs`
+- Health: `http://127.0.0.1:8000/health`
 
-### Database reset (common during local development)
-- DB file is controlled by `DB_PATH` (default `./dataspeak.db`)
-- Reset and re-init on next startup:
-  - `rm -f ./dataspeak.db`
+### Run React frontend (dev)
+```bash
+cd frontend-react && npm install && npm run dev
+```
+- Dev server: `http://localhost:3000`
+- Vite proxies `/api/*` → `http://127.0.0.1:8001/v2/*` (note: proxy target port is 8001, backend runs on 8000 — adjust as needed)
 
-### Checks used in this repo
-- There is currently no configured pytest/lint toolchain in the repo.
-- Common targeted checks:
-  - Python syntax check: `python -m py_compile backend/main.py`
-  - JS syntax check: `node --check frontend/app.js`
-- If/when pytest tests are added, run one test with:
-  - `python -m pytest path/to/test_file.py::test_name`
+### Database reset
+```bash
+rm -f ./dataspeak.db
+```
+DB is auto-initialized on next startup via `backend/database.py:init_db()`.
 
-## High-level architecture
+### Syntax checks (no test suite yet)
+```bash
+python -m py_compile backend/main.py
+node --check frontend-react/src/App.jsx
+```
+
+## Architecture
 
 ### Overview
-- Single-process FastAPI app serves both API and static frontend (`backend/main.py`).
-- Core logic is a LangGraph workflow with multiple intent-specific agents (`backend/agent_graph.py`).
-- Agents are defined in `backend/agents/` with naming pattern `*_agent.py`.
-- Storage is SQLite (`dataspeak.db` by default) plus in-memory session state for chat history and pending confirmations.
+DBot is a natural-language-to-database tool. Users chat in natural language; the system uses DeepSeek (or OpenAI) function calling to translate intent into SQLite operations.
 
-### Request/response flow
-- `POST /chat`:
-  - Builds initial `DataSpeakState` with `chat_history` from server memory.
-  - Streams graph progress via SSE (`type: step`) as each node executes.
-  - Returns either:
-    - normal streamed response (`response_start` + `token` + `done`), or
-    - confirmation preview (`confirm`) for write operations.
-- `POST /confirm/{session_id}`:
-  - Executes previously staged write operation and streams result.
-- `POST /cancel/{session_id}`:
-  - Cancels staged write operation.
+**Two frontend versions exist:**
+- `frontend/` — legacy plain HTML/CSS/JS, served as static files by FastAPI at `/static`
+- `frontend-react/` — new React+Vite SPA (in progress), runs separately on port 3000
 
-### LangGraph workflow structure
-- Entry: `router` (intent classification from user input + recent chat history).
-- Intent routing:
-  - `insert|update` → `planner` → `extractor` → `critic` → `confirm_preview`
-  - `create_table` → `create_table`
-  - `drop_table` → `drop_table` → (`confirm_preview` or direct end on parse failure)
-  - `alter_table` → `alter_table` → (`confirm_preview` or direct end)
-  - `delete_data` → `delete_data` → (`confirm_preview` or direct end)
-  - `list_tables` → `list_tables`
-  - `query|chat` → `query`
-- Critic retry loop:
-  - `FAIL` can re-run `extractor` up to 2 retries, then `error_end`.
+### Backend structure (`backend/`)
 
-### State and confirmation model
-- Shared graph state type: `DataSpeakState` (`backend/state.py`).
-- Session state (chat history, pending confirmations) is stored in memory and lost on server restart.
-- Confirmation is explicit:
-  - `confirm_preview_node` sets `needs_confirmation=True` and human-readable preview.
-  - Actual DB mutation happens only after `/confirm/{session_id}`.
+```
+backend/
+├── main.py              # FastAPI app, all /v2/* endpoints, lifespan, CORS
+├── config.py            # ExtendedConfigManager — multi-provider LLM config (.env + DB _app_config)
+├── database.py          # SQLite init (todos, _table_metadata), get_connection()
+├── state.py             # Dataclasses: ChatSession, ToolCall, Confirmation, Message, ChatRequest/Response
+├── handlers/
+│   └── chat_handler.py  # ChatHandler + SessionManager — full chat workflow orchestration
+├── services/
+│   └── deepseek_service.py  # DeepSeekService — OpenAI-compatible API calls, tool parsing, serialization
+└── tools/
+    ├── registry.py      # ToolRegistry — registration, confirmation logic, auto-execute config
+    ├── init_tools.py    # Registers all tools at import time, provides get_tools_for_llm()
+    ├── db_tools.py      # Data CRUD: insert_row, update_row, delete_row, query_data, get/update_cell_value
+    └── schema_tools.py  # DDL: create_table, drop_table, add/drop/rename_column, get_schema, list_tables
+```
 
-### Database and metadata model
-- Base tables initialized in `backend/database.py`:
-  - `todos` (default user table)
-  - `_table_metadata` (description + aliases for semantic matching)
-- Runtime/internal tables excluded from user display:
-  - `checkpoints`, `writes`, `checkpoint_blobs`, `checkpoint_migrations`, `_table_metadata`
-- Schema/metadata helpers live in `backend/tools/schema_tools.py`.
-- Insert/update primitives live in `backend/tools/db_tools.py`.
+### Request flow
+1. `POST /v2/chat` → `ChatHandler.handle_chat()`
+2. Builds message history from `ChatSession`, calls DeepSeek with tool schemas
+3. If tool_calls returned → check confirmation need → auto-execute or await `/v2/confirm`
+4. Tool results fed back to LLM for final natural-language response
 
-### Configuration model
-- Runtime config manager: `backend/config.py` (`ConfigManager` singleton as `config_manager`).
-- Merge order: `.env` defaults + DB overrides from `_app_config`.
-- Config API endpoints in `backend/main.py`:
-  - `GET /config`, `PUT /config`, `POST /config/batch`, `POST /config/test`, `DELETE /config/{key}`
-- Important nuance:
-  - Some agents use `config_manager.get_llm_params()`.
-  - Some agents still read `OPENAI_MODEL` directly via `os.getenv`.
+### Key design patterns
+- **Tool registry** (`init_tools.py`): All tools registered at module import with OpenAI-compatible JSON Schema. Each tool has `confidence_level` (SAFE/RISKY/DESTRUCTIVE) and `requires_confirmation` flag.
+- **Confirmation flow**: RISKY/DESTRUCTIVE tools require user approval. `ChatSession.pending_confirmation` holds staged `ToolCall` objects until `/v2/confirm` approves or rejects.
+- **Auto-execute mode**: Configurable via env/DB config. Only SAFE tools in the allow-list can auto-execute.
+- **Session management**: In-memory `SessionManager` — sessions are lost on restart. Hourly cleanup of idle sessions.
+- **Config merging**: `.env` defaults → `_app_config` DB table overrides. `ExtendedConfigManager` singleton.
 
-## Frontend architecture
-- Plain HTML/CSS/JS (no frontend framework): `frontend/index.html`, `frontend/app.js`.
-- Layout is now DB-focused:
-  - Left: session list
-  - Middle: narrower chat panel
-  - Right: primary table/data panel
-- `app.js` consumes SSE event types: `step`, `response_start`, `token`, `confirm`, `done`, `error`.
-- Settings are in a modal (`#settings-modal`) and persisted in `localStorage`.
+### API endpoints
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/v2/chat` | Chat with tool calling |
+| POST | `/v2/confirm` | Approve/reject pending operations |
+| GET | `/v2/tables` | List all user tables with columns |
+| GET | `/v2/tables/{name}` | Query table data |
+| POST | `/v2/tables` | Create table |
+| DELETE | `/v2/tables/{name}` | Drop table |
+| GET | `/v2/config` | Get config (masked secrets) |
+| PUT | `/v2/config` | Update config |
+| POST | `/v2/config/test` | Test LLM connection |
+| GET | `/v2/sessions/{id}` | Session info |
+| PUT | `/v2/sessions/{id}/auto-execute` | Toggle auto-execute |
 
-## Coordination points when changing behavior
-- Adding/changing intents usually requires synchronized edits in:
-  - `backend/agents/router_agent.py` (prompt + parsing)
-  - `backend/agent_graph.py` (routing conditions + graph edges)
-  - `backend/main.py` (`NODE_LABELS`, refresh behavior assumptions)
-  - `frontend/app.js` (intent-based table refresh logic)
-- Changing write-confirmation behavior requires updates across:
-  - `confirm_preview_node` in `backend/agent_graph.py`
-  - `/confirm/{session_id}` and pending state handling in `backend/main.py`
-  - confirm card + actions in `frontend/app.js`
+### Internal SQLite tables (excluded from user display)
+`checkpoints`, `writes`, `checkpoint_blobs`, `checkpoint_migrations`, `_table_metadata`, `_app_config`
 
-## Repo-specific notes
-- No README/cursor/copilot instruction files were found at the time this guide was generated.
-- `config.yaml` exists but is not part of this FastAPI runtime path in current code (likely leftover from LiteLLM proxy configuration).
-- `demo.py` contains unrelated algorithm code and is not part of the main application.
-- Internal SQLite tables: `checkpoints`, `writes`, `checkpoint_blobs`, `checkpoint_migrations`, `_table_metadata`, `_app_config` (configuration storage).
+### Coordination points when changing behavior
+- **Adding tools**: `backend/tools/db_tools.py` or `schema_tools.py` (impl + schema) → `init_tools.py` (register) → `registry.py` (confirmation message template)
+- **Changing confirmation flow**: `registry.py` + `chat_handler.py._check_confirmation_need()` + `main.py:/v2/confirm` + frontend confirm UI
+- **Adding API endpoints**: `backend/main.py` + `frontend-react/src/services/apiService.js`
+
+### Known issues / in-progress
+- React frontend dependencies not installed; Vite proxy targets port 8001 but backend defaults to 8000
+- `frontend-react/src/services/apiService.js` may reference endpoints not yet implemented on backend
+- `backup-old-architecture/` contains the original LangGraph-based agent system (kept for reference)
+- `.env.example` contains a real-looking API key — should be replaced with placeholders

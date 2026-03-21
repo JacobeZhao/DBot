@@ -24,34 +24,35 @@ class DeepSeekService:
         self.config_manager = config_manager or extended_config_manager
         self._client_cache = {}  # 客户端缓存，按提供商存储
 
-    def _get_client(self, provider: LLMProvider = LLMProvider.DEEPSEEK) -> OpenAI:
+    def _get_client(self, provider=None) -> OpenAI:
         """获取OpenAI客户端（支持缓存）"""
-        if provider in self._client_cache:
-            return self._client_cache[provider]
+        cache_key = "default"
+        if cache_key in self._client_cache:
+            return self._client_cache[cache_key]
 
         # 获取LLM参数
-        llm_params = self.config_manager.get_llm_params(provider)
+        llm_params = self.config_manager.get_llm_params()
         api_key = llm_params.get("api_key")
         base_url = llm_params.get("base_url")
 
         if not api_key:
-            raise ValueError(f"{provider.value} API密钥未配置")
+            raise ValueError("LLM API密钥未配置")
 
         # 创建客户端
         client = OpenAI(
             api_key=api_key,
             base_url=base_url,
-            timeout=30.0  # 30秒超时
+            timeout=30.0
         )
 
-        self._client_cache[provider] = client
+        self._client_cache[cache_key] = client
         return client
 
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        provider: LLMProvider = LLMProvider.DEEPSEEK,
+        provider=None,
         stream: bool = False,
         **kwargs
     ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
@@ -69,8 +70,8 @@ class DeepSeekService:
             如果stream=False: 完整的响应字典
             如果stream=True: 响应生成器
         """
-        client = self._get_client(provider)
-        llm_params = self.config_manager.get_llm_params(provider)
+        client = self._get_client()
+        llm_params = self.config_manager.get_llm_params()
 
         # 准备请求参数
         request_params = {
@@ -384,19 +385,10 @@ class DeepSeekService:
 
         return messages
 
-    async def test_connection(self, provider: LLMProvider = LLMProvider.DEEPSEEK) -> Dict[str, Any]:
-        """
-        测试API连接
-
-        Args:
-            provider: LLM提供商
-
-        Returns:
-            测试结果
-        """
+    async def test_connection(self, provider=None) -> Dict[str, Any]:
+        """测试API连接"""
         try:
-            # 使用配置管理器的测试方法
-            result = self.config_manager.test_connection(provider)
+            result = self.config_manager.test_connection()
             return result
         except Exception as e:
             return {

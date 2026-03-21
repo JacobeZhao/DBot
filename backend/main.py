@@ -477,18 +477,12 @@ class ConfigTestRequestModel(BaseModel):
     base_url: Optional[str] = None
     model: Optional[str] = None
     temperature: Optional[float] = None
-    provider: str = "deepseek"  # "openai" 或 "deepseek"
 
 
 @app.post("/v2/config/test")
 async def test_config(test_request: ConfigTestRequestModel):
     """测试LLM连接"""
     try:
-        provider = test_request.provider.lower()
-        if provider not in ["openai", "deepseek"]:
-            raise HTTPException(status_code=400, detail="provider必须是'openai'或'deepseek'")
-
-        # 构建测试配置
         config = {}
         if test_request.api_key is not None:
             config["api_key"] = test_request.api_key
@@ -499,11 +493,7 @@ async def test_config(test_request: ConfigTestRequestModel):
         if test_request.temperature is not None:
             config["temperature"] = test_request.temperature
 
-        # 测试连接
-        from backend.config import LLMProvider
-        provider_enum = LLMProvider.OPENAI if provider == "openai" else LLMProvider.DEEPSEEK
-        result = extended_config_manager.test_connection(provider_enum, config)
-
+        result = extended_config_manager.test_connection(config=config if config else None)
         return result
     except Exception as e:
         logger.error(f"测试配置失败: {str(e)}")
@@ -568,10 +558,10 @@ if __name__ == "__main__":
     logger.info("DBot新版本启动检查")
     logger.info("=" * 50)
 
-    # 检查DeepSeek配置
-    deepseek_config = extended_config_manager.get_llm_params()
-    if not deepseek_config.get("api_key"):
-        logger.warning("DeepSeek API密钥未配置，请设置DEEPSEEK_API_KEY环境变量")
+    # 检查LLM配置
+    llm_config = extended_config_manager.get_llm_params()
+    if not llm_config.get("api_key"):
+        logger.warning("LLM API密钥未配置，请设置LLM_API_KEY环境变量")
 
     # 检查数据库
     db_path = extended_config_manager.get("db_path", "./dataspeak.db")

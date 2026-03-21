@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import MessageList from './MessageList'
 import MessageInput from './MessageInput'
 import { useApp } from '../context/AppContext'
 import '../styles/ChatInterface.css'
 
 const ChatInterface = () => {
-  const { currentSession, sendMessage } = useApp()
+  const { messages, sendMessage } = useApp()
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef(null)
@@ -16,7 +16,7 @@ const ChatInterface = () => {
 
   useEffect(() => {
     scrollToBottom()
-  }, [currentSession?.messages])
+  }, [messages])
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return
@@ -41,31 +41,33 @@ const ChatInterface = () => {
     }
   }
 
-  if (!currentSession) {
-    return (
-      <div className="chat-interface no-session">
-        <div className="no-session-message">
-          <p>请从左侧选择或创建会话</p>
-        </div>
-      </div>
-    )
+  const handleQuickAction = (text) => {
+    setInputMessage(text)
   }
+
+  const isEmpty = !messages || messages.length === 0
 
   return (
     <div className="chat-interface">
-      <div className="chat-header">
-        <h2>{currentSession.name}</h2>
-        <div className="session-info">
-          <span className="session-id">ID: {currentSession.id}</span>
-          <span className="message-count">
-            消息数: {currentSession.messages?.length || 0}
-          </span>
-        </div>
-      </div>
-
       <div className="messages-container">
-        <MessageList messages={currentSession.messages || []} />
-        <div ref={messagesEndRef} />
+        {isEmpty ? (
+          <div className="empty-state">
+            <p className="empty-hint">输入指令操作数据库</p>
+            <div className="quick-actions">
+              <button className="quick-action-btn" onClick={() => handleQuickAction('显示所有表')}>
+                显示所有表
+              </button>
+              <button className="quick-action-btn" onClick={() => handleQuickAction('查询数据库中有多少条记录')}>
+                查询记录数
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <MessageList messages={messages} />
+            <div ref={messagesEndRef} />
+          </>
+        )}
       </div>
 
       <div className="input-area">
@@ -76,9 +78,6 @@ const ChatInterface = () => {
           onKeyPress={handleKeyPress}
           isLoading={isLoading}
         />
-        <div className="input-hint">
-          <span>按 Enter 发送，Shift + Enter 换行</span>
-        </div>
       </div>
     </div>
   )

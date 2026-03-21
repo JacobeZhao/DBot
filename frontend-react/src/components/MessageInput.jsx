@@ -1,68 +1,45 @@
-import React from 'react'
+import { useRef } from 'react'
 import '../styles/MessageInput.css'
 
-const MessageInput = ({
-  value,
-  onChange,
-  onSend,
-  onKeyPress,
-  isLoading,
-}) => {
-  const textareaRef = React.useRef(null)
+const MessageInput = ({ value, onChange, onSend, onKeyPress, isLoading }) => {
+  const textareaRef = useRef(null)
 
   const handleChange = (e) => {
     onChange(e.target.value)
-
-    // 自动调整高度
     const textarea = textareaRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${textarea.scrollHeight}px`
-    }
-  }
-
-  const handleSendClick = () => {
-    onSend()
-  }
-
-  const handleKeyDown = (e) => {
-    if (onKeyPress) {
-      onKeyPress(e)
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`
     }
   }
 
   return (
-    <div className="message-input-container">
-      <div className="input-wrapper">
-        <textarea
-          ref={textareaRef}
-          className="message-textarea"
-          placeholder="输入消息...（支持自然语言操作数据库）"
-          value={value}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          rows={1}
-          disabled={isLoading}
-        />
-        <button
-          className="send-button"
-          onClick={handleSendClick}
-          disabled={isLoading || !value.trim()}
-        >
-          {isLoading ? (
-            <span className="loading-spinner"></span>
-          ) : (
-            '发送'
-          )}
-        </button>
-      </div>
-      <div className="input-features">
-        <div className="feature-hints">
-          <span className="hint-item">🔍 查询数据</span>
-          <span className="hint-item">📝 插入/更新数据</span>
-          <span className="hint-item">🗃️ 管理表格</span>
-        </div>
-      </div>
+    <div className="msg-input-wrap">
+      <textarea
+        ref={textareaRef}
+        className="msg-textarea"
+        placeholder="输入你的问题或数据库指令..."
+        value={value}
+        onChange={handleChange}
+        onKeyDown={onKeyPress}
+        rows={1}
+        disabled={isLoading}
+      />
+      <button
+        className="msg-send-btn"
+        onClick={onSend}
+        disabled={isLoading || !value.trim()}
+        title="发送"
+      >
+        {isLoading ? (
+          <span className="send-spinner" />
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        )}
+      </button>
     </div>
   )
 }

@@ -3,3 +3,8 @@
 config.yaml
 node_modules
 __pycache__
+*.pyc
+dist/
+*.db
+.idea/
+.playwright-mcp/

@@ -87,7 +87,7 @@ const SettingsPanel = ({ onClose }) => {
       autoExecuteThreshold: 0.8,
       autoExecuteAllowedOperations: ['query_data', 'get_schema', 'list_tables'],
       autoExecuteExcludeTables: ['_app_config', '_table_metadata'],
-      llmProvider: 'deepseek',
+      llmProvider: 'claude-4.6-sonnet',
       temperature: 0.0,
     })
   }
@@ -283,19 +283,20 @@ const SettingsPanel = ({ onClose }) => {
 
             <div className="setting-item">
               <div className="setting-label">
-                <label htmlFor="llmProvider">LLM 提供商</label>
-                <span className="setting-description">选择使用的 AI 模型提供商</span>
+                <label htmlFor="llmModel">模型</label>
+                <span className="setting-description">选择使用的 AI 模型</span>
               </div>
               <div className="setting-control">
                 <select
-                  id="llmProvider"
+                  id="llmModel"
                   value={localSettings.llmProvider}
                   onChange={(e) =>
                     handleSettingChange('llmProvider', e.target.value)
                   }
                 >
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="openai">OpenAI</option>
+                  <option value="claude-4.6-opus">Claude 4.6 Opus</option>
+                  <option value="claude-4.6-sonnet">Claude 4.6 Sonnet</option>
+                  <option value="claude-4.5-haiku">Claude 4.5 Haiku</option>
                 </select>
               </div>
             </div>

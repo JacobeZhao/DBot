@@ -44,7 +44,7 @@ export const AppProvider = ({ children }) => {
     '_app_config',
     '_table_metadata',
   ])
-  const [llmProvider, setLlmProvider] = useState('deepseek')
+  const [llmProvider, setLlmProvider] = useState('claude-4.6-sonnet')
   const [temperature, setTemperature] = useState(0.0)
 
   // 配置状态

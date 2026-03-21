@@ -1,54 +1,47 @@
-import React from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import '../styles/MessageItem.css'
 
 const MessageItem = ({ message }) => {
   const isUser = message.role === 'user'
-  const isAssistant = message.role === 'assistant'
   const isSystem = message.role === 'system'
 
-  const getRoleLabel = () => {
-    if (isUser) return '用户'
-    if (isAssistant) return '助手'
-    if (isSystem) return '系统'
-    return '未知'
-  }
-
   const getRoleClass = () => {
-    if (isUser) return 'user-message'
-    if (isAssistant) return 'assistant-message'
-    if (isSystem) return 'system-message'
-    return ''
-  }
-
-  const formatContent = (content) => {
-    if (!content) return ''
-
-    // 简单换行处理
-    return content.split('\n').map((line, index) => (
-      <React.Fragment key={index}>
-        {line}
-        {index < content.split('\n').length - 1 && <br />}
-      </React.Fragment>
-    ))
+    if (isUser) return 'msg-user'
+    if (isSystem) return 'msg-system'
+    return 'msg-assistant'
   }
 
   return (
-    <div className={`message-item ${getRoleClass()}`}>
-      <div className="message-header">
-        <span className="message-role">{getRoleLabel()}</span>
-        <span className="message-time">
+    <div className={`msg-row ${getRoleClass()}`}>
+      {!isUser && !isSystem && (
+        <div className="msg-avatar assistant-avatar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+        </div>
+      )}
+      <div className="msg-bubble">
+        <div className="msg-text">
+          {isUser ? (
+            message.content
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content || ''}
+            </ReactMarkdown>
+          )}
+        </div>
+        <span className="msg-time">
           {message.timestamp
-            ? new Date(message.timestamp).toLocaleTimeString()
-            : '刚刚'}
+            ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : ''}
         </span>
       </div>
-      <div className="message-content">
-        {formatContent(message.content)}
-      </div>
       {message.error && (
-        <div className="message-error">
-          <span className="error-icon">⚠️</span>
-          <span className="error-text">{message.error}</span>
+        <div className="msg-error">
+          <span>{message.error}</span>
         </div>
       )}
     </div>

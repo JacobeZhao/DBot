@@ -14,7 +14,7 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from backend.config import extended_config_manager, LLMProvider
+from backend.config import extended_config_manager
 from backend.services.deepseek_service import deepseek_service
 from backend.state import (
     ChatSession, ChatRequest, ChatResponse, ToolCall, ToolCallStatus,
@@ -116,7 +116,7 @@ class ChatHandler:
             llm_response = await deepseek_service.chat_completion(
                 messages=llm_messages,
                 tools=tools,
-                provider=LLMProvider.DEEPSEEK,
+                provider=None,
                 stream=False
             )
 
@@ -371,7 +371,7 @@ class ChatHandler:
             llm_response = await deepseek_service.chat_completion(
                 messages=llm_messages,
                 tools=tools,
-                provider=LLMProvider.DEEPSEEK,
+                provider=None,
                 stream=False
             )
 
