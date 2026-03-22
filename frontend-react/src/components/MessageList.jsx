@@ -18,7 +18,7 @@ const MessageList = ({ messages }) => {
     <div className="message-list">
       {messages.map((message, index) => (
         <div key={message.id || index} className="message-wrapper">
-          <MessageItem message={message} />
+          <MessageItem message={message} isLast={index === messages.length - 1} />
 
           {/* 显示工具调用信息 */}
           {message.tool_calls && message.tool_calls.length > 0 && (

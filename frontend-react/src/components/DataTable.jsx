@@ -6,6 +6,7 @@ const DataTable = ({ data }) => {
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [sortColumn, setSortColumn] = useState(null)
   const [sortDirection, setSortDirection] = useState('asc')
+  const [searchTerm, setSearchTerm] = useState('')
 
   if (!data || !data.rows || data.rows.length === 0) {
     return (
@@ -18,14 +19,25 @@ const DataTable = ({ data }) => {
   }
 
   const columns = data.columns || []
-  const rows = data.rows || []
-  const totalRows = data.count || rows.length
+  const allRows = data.rows || []
+
+  // 搜索过滤
+  const filteredRows = searchTerm
+    ? allRows.filter((row) =>
+        columns.some((col) => {
+          const val = row[col.name]
+          return val != null && String(val).toLowerCase().includes(searchTerm.toLowerCase())
+        })
+      )
+    : allRows
+
+  const totalRows = filteredRows.length
 
   // 分页计算
-  const totalPages = Math.ceil(totalRows / itemsPerPage)
+  const totalPages = Math.max(1, Math.ceil(totalRows / itemsPerPage))
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = Math.min(startIndex + itemsPerPage, totalRows)
-  const currentRows = rows.slice(startIndex, endIndex)
+  const currentRows = filteredRows.slice(startIndex, endIndex)
 
   // 排序
   const sortedRows = [...currentRows]
@@ -68,6 +80,35 @@ const DataTable = ({ data }) => {
     return sortDirection === 'asc' ? '↑' : '↓'
   }
 
+  const handleSearch = (e) => {
+    setSearchTerm(e.target.value)
+    setCurrentPage(1)
+  }
+
+  const exportCSV = () => {
+    const header = columns.map((c) => c.name).join(',')
+    const csvRows = filteredRows.map((row) =>
+      columns
+        .map((col) => {
+          const val = row[col.name]
+          if (val == null) return ''
+          const str = String(val)
+          return str.includes(',') || str.includes('"') || str.includes('\n')
+            ? `"${str.replace(/"/g, '""')}"`
+            : str
+        })
+        .join(',')
+    )
+    const csv = [header, ...csvRows].join('\n')
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${data.table_name || 'export'}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const formatValue = (value) => {
     if (value === null || value === undefined) {
       return <span className="null-value">NULL</span>
@@ -91,7 +132,32 @@ const DataTable = ({ data }) => {
   return (
     <div className="data-table">
       <div className="table-info">
-        <span className="row-count">共 {totalRows} 行</span>
+        <span className="row-count">
+          共 {totalRows} 行{searchTerm && ` (已过滤)`}
+        </span>
+        <div className="table-toolbar">
+          <div className="table-search">
+            <svg className="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="搜索..."
+              value={searchTerm}
+              onChange={handleSearch}
+            />
+          </div>
+          <button className="table-export-btn" onClick={exportCSV} title="导出 CSV">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            CSV
+          </button>
+        </div>
         <div className="pagination-controls">
           <select
             className="page-size-select"

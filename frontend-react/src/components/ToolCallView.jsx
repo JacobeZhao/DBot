@@ -26,7 +26,27 @@ const ToolCallView = ({ toolCall }) => {
     }
   }
 
+  const getSummary = () => {
+    const args = toolCall.arguments
+    if (!args || typeof args !== 'object') return null
+    const parts = []
+    if (args.table_name) parts.push(`table: ${args.table_name}`)
+    if (args.query) parts.push(args.query.length > 60 ? args.query.slice(0, 60) + '...' : args.query)
+    if (args.sql) parts.push(args.sql.length > 60 ? args.sql.slice(0, 60) + '...' : args.sql)
+    if (args.column_name) parts.push(`col: ${args.column_name}`)
+    if (args.limit) parts.push(`limit: ${args.limit}`)
+    if (parts.length === 0) {
+      const keys = Object.keys(args).slice(0, 3)
+      keys.forEach((k) => {
+        const v = String(args[k])
+        parts.push(`${k}: ${v.length > 30 ? v.slice(0, 30) + '...' : v}`)
+      })
+    }
+    return parts.join(', ')
+  }
+
   const badge = getStatusBadge(toolCall.status)
+  const summary = getSummary()
 
   return (
     <div className="tc-card">
@@ -36,6 +56,7 @@ const ToolCallView = ({ toolCall }) => {
             <polyline points="9 18 15 12 9 6" />
           </svg>
           <span className="tc-name">{toolCall.name}</span>
+          {summary && <span className="tc-summary">{summary}</span>}
         </div>
         <span className={`tc-badge ${badge.cls}`}>{badge.label}</span>
       </div>

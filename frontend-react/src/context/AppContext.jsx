@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import apiService from '../services/apiService'
 
 const AppContext = createContext()
@@ -24,9 +24,26 @@ export const AppProvider = ({ children }) => {
   const [isLoadingTables, setIsLoadingTables] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(false)
 
-  // 聊天状态
-  const [messages, setMessages] = useState([])
+  // 聊天状态 (从 localStorage 恢复)
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('dbot-messages')
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
   const [isLoadingChat, setIsLoadingChat] = useState(false)
+
+  // 持久化消息到 localStorage（最多保留 50 条）
+  useEffect(() => {
+    try {
+      const toSave = messages.slice(-50)
+      localStorage.setItem('dbot-messages', JSON.stringify(toSave))
+    } catch {
+      // localStorage 满或不可用，静默忽略
+    }
+  }, [messages])
 
   // 确认状态
   const [pendingConfirmation, setPendingConfirmation] = useState(null)
@@ -46,6 +63,27 @@ export const AppProvider = ({ children }) => {
   ])
   const [llmProvider, setLlmProvider] = useState('claude-4.6-sonnet')
   const [temperature, setTemperature] = useState(0.0)
+
+  // Toast 状态
+  const [toasts, setToasts] = useState([])
+
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now().toString()
+    setToasts((prev) => [...prev, { id, message, type }])
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id))
+    }, 3000)
+  }, [])
+
+  const removeToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  // 清空聊天
+  const clearMessages = useCallback(() => {
+    setMessages([])
+    localStorage.removeItem('dbot-messages')
+  }, [])
 
   // 配置状态
   const [config, setConfig] = useState({})
@@ -343,6 +381,7 @@ export const AppProvider = ({ children }) => {
     messages,
     isLoadingChat,
     sendMessage,
+    clearMessages,
 
     // 确认
     pendingConfirmation,
@@ -369,6 +408,11 @@ export const AppProvider = ({ children }) => {
     config,
     updateConfig,
     loadConfig,
+
+    // Toast
+    toasts,
+    showToast,
+    removeToast,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

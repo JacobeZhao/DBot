@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import MessageList from './MessageList'
 import MessageInput from './MessageInput'
+import ThinkingIndicator from './ThinkingIndicator'
 import { useApp } from '../context/AppContext'
 import '../styles/ChatInterface.css'
 
 const ChatInterface = () => {
-  const { messages, sendMessage } = useApp()
+  const { messages, sendMessage, clearMessages, showToast } = useApp()
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef(null)
@@ -45,10 +46,27 @@ const ChatInterface = () => {
     setInputMessage(text)
   }
 
+  const handleClearChat = () => {
+    if (messages.length === 0) return
+    clearMessages()
+    showToast('聊天记录已清空', 'info')
+  }
+
   const isEmpty = !messages || messages.length === 0
 
   return (
     <div className="chat-interface">
+      <div className="chat-header">
+        <span className="chat-title">对话</span>
+        {!isEmpty && (
+          <button className="chat-clear-btn" onClick={handleClearChat} title="清空聊天">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </button>
+        )}
+      </div>
       <div className="messages-container">
         {isEmpty ? (
           <div className="empty-state">
@@ -65,6 +83,7 @@ const ChatInterface = () => {
         ) : (
           <>
             <MessageList messages={messages} />
+            {isLoading && <ThinkingIndicator />}
             <div ref={messagesEndRef} />
           </>
         )}

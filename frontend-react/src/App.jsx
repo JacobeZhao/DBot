@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ChatInterface from './components/ChatInterface'
 import DataTable from './components/DataTable'
+import Toast from './components/Toast'
 import ConfirmationModal from './components/ConfirmationModal'
 import SettingsPanel from './components/SettingsPanel'
 import { AppProvider, useApp } from './context/AppContext'
@@ -178,6 +179,7 @@ function AppContent() {
       </main>
 
       <ConfirmationModal />
+      <Toast />
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   )
